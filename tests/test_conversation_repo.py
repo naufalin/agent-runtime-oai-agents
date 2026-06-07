@@ -24,20 +24,41 @@ async def db():
 @pytest.mark.asyncio
 async def test_create_conversation(db):
     repo = ConversationRepo(db)
-    result = await repo.create_conversation("abc-123", "Test")
+    result = await repo.create_conversation("Test")
 
-    assert result.id == "abc-123"
+    assert result.id is not None
+    assert result.id > 0
     assert result.title == "Test"
     assert result.created_at is not None
 
 
 @pytest.mark.asyncio
+async def test_create_conversation_auto_id(db):
+    repo = ConversationRepo(db)
+    conv1 = await repo.create_conversation("First")
+    conv2 = await repo.create_conversation("Second")
+
+    assert conv2.id > conv1.id
+
+
+@pytest.mark.asyncio
+async def test_update_title(db):
+    repo = ConversationRepo(db)
+    conv = await repo.create_conversation("Old Title")
+    await repo.update_title(conv.id, "New Title")
+
+    updated = await repo.get_conversation(conv.id)
+    assert updated is not None
+    assert updated.title == "New Title"
+
+
+@pytest.mark.asyncio
 async def test_add_message(db):
     repo = ConversationRepo(db)
-    await repo.create_conversation("abc-123", "Test")
-    result = await repo.add_message("abc-123", "user", "Hello!")
+    conv = await repo.create_conversation("Test")
+    result = await repo.add_message(conv.id, "user", "Hello!")
 
-    assert result.conversation_id == "abc-123"
+    assert result.conversation_id == conv.id
     assert result.role == "user"
     assert result.content == "Hello!"
 
@@ -45,11 +66,11 @@ async def test_add_message(db):
 @pytest.mark.asyncio
 async def test_get_messages(db):
     repo = ConversationRepo(db)
-    await repo.create_conversation("abc-123", "Test")
-    await repo.add_message("abc-123", "user", "Hello")
-    await repo.add_message("abc-123", "assistant", "Hi!")
+    conv = await repo.create_conversation("Test")
+    await repo.add_message(conv.id, "user", "Hello")
+    await repo.add_message(conv.id, "assistant", "Hi!")
 
-    messages = await repo.get_messages("abc-123")
+    messages = await repo.get_messages(conv.id)
 
     assert len(messages) == 2
     assert messages[0].role == "user"
@@ -59,8 +80,8 @@ async def test_get_messages(db):
 @pytest.mark.asyncio
 async def test_list_conversations(db):
     repo = ConversationRepo(db)
-    await repo.create_conversation("abc", "First")
-    await repo.create_conversation("def", "Second")
+    await repo.create_conversation("First")
+    await repo.create_conversation("Second")
 
     convos = await repo.list_conversations(limit=10)
 
@@ -70,12 +91,12 @@ async def test_list_conversations(db):
 @pytest.mark.asyncio
 async def test_get_conversation_found(db):
     repo = ConversationRepo(db)
-    await repo.create_conversation("abc", "Test")
+    conv = await repo.create_conversation("Test")
 
-    result = await repo.get_conversation("abc")
+    result = await repo.get_conversation(conv.id)
 
     assert result is not None
-    assert result.id == "abc"
+    assert result.id == conv.id
     assert result.title == "Test"
 
 
@@ -83,6 +104,6 @@ async def test_get_conversation_found(db):
 async def test_get_conversation_not_found(db):
     repo = ConversationRepo(db)
 
-    result = await repo.get_conversation("nonexistent")
+    result = await repo.get_conversation(99999)
 
     assert result is None

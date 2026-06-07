@@ -10,27 +10,29 @@ class ConversationRepo:
     def __init__(self, db: Database):
         self.db = db
 
-    async def create_conversation(
-        self, conversation_id: str, title: str = "New Conversation"
-    ) -> Conversation:
+    async def create_conversation(self, title: str = "New Conversation") -> Conversation:
+        """Create a new conversation. Returns the ORM object with the auto-generated ID."""
         async with self.db.session() as session:
-            conv = Conversation(id=conversation_id, title=title)
+            conv = Conversation(title=title)
             session.add(conv)
             await session.flush()
             return conv
 
-    async def add_message(
-        self, conversation_id: str, role: str, content: str
-    ) -> Message:
+    async def update_title(self, conversation_id: int, title: str) -> None:
+        """Update a conversation's title."""
         async with self.db.session() as session:
-            msg = Message(
-                conversation_id=conversation_id, role=role, content=content
-            )
+            conv = await session.get(Conversation, conversation_id)
+            if conv:
+                conv.title = title
+
+    async def add_message(self, conversation_id: int, role: str, content: str) -> Message:
+        async with self.db.session() as session:
+            msg = Message(conversation_id=conversation_id, role=role, content=content)
             session.add(msg)
             await session.flush()
             return msg
 
-    async def get_messages(self, conversation_id: str) -> list[Message]:
+    async def get_messages(self, conversation_id: int) -> list[Message]:
         async with self.db.session() as session:
             result = await session.execute(
                 select(Message)
@@ -46,9 +48,6 @@ class ConversationRepo:
             )
             return list(result.scalars().all())
 
-    async def get_conversation(self, conversation_id: str) -> Conversation | None:
+    async def get_conversation(self, conversation_id: int) -> Conversation | None:
         async with self.db.session() as session:
-            result = await session.execute(
-                select(Conversation).where(Conversation.id == conversation_id)
-            )
-            return result.scalar_one_or_none()
+            return await session.get(Conversation, conversation_id)

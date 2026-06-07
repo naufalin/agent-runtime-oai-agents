@@ -1,12 +1,13 @@
 """Main agent definition with all tools and persistence."""
 
-import uuid
+from dataclasses import dataclass
 
 from agents import Agent, Runner
 
 from agent_runtime.config import Settings
 from agent_runtime.db.connection import Database
 from agent_runtime.db.conversation_repo import ConversationRepo
+from agent_runtime.ids import decode, encode
 from agent_runtime.tools.country import get_country_info
 from agent_runtime.tools.currency import convert_currency
 from agent_runtime.tools.weather import get_weather
@@ -46,21 +47,45 @@ def create_agent() -> Agent:
     )
 
 
-async def run_agent(user_message: str, conversation_id: str | None = None) -> str:
-    """Run the agent with a user message, persist to DB, and return the response."""
+@dataclass
+class AgentResponse:
+    """Response from run_agent with the conversation ID for follow-up messages."""
+
+    response: str
+    conversation_id: str  # encoded ID for external use
+
+
+async def run_agent(user_message: str, conversation_id: str | None = None) -> AgentResponse:
+    """Run the agent with a user message, persist to DB, and return the response.
+
+    Args:
+        user_message: The user's message text.
+        conversation_id: Encoded conversation ID (from ids.encode). None to start new.
+
+    Returns:
+        The agent's response text.
+    """
     db = await get_db()
     repo = ConversationRepo(db)
 
-    # Create conversation if new
-    if conversation_id is None:
-        conversation_id = str(uuid.uuid4())
-    existing = await repo.get_conversation(conversation_id)
-    if not existing:
+    # Resolve conversation: decode existing or create new
+    internal_id: int | None = None
+    if conversation_id is not None:
+        try:
+            internal_id = decode(conversation_id)
+            existing = await repo.get_conversation(internal_id)
+            if not existing:
+                internal_id = None
+        except ValueError:
+            internal_id = None
+
+    if internal_id is None:
         title = user_message[:50] + ("..." if len(user_message) > 50 else "")
-        await repo.create_conversation(conversation_id, title)
+        conv = await repo.create_conversation(title)
+        internal_id = conv.id
 
     # Save user message
-    await repo.add_message(conversation_id, "user", user_message)
+    await repo.add_message(internal_id, "user", user_message)
 
     # Run the agent
     agent = create_agent()
@@ -68,6 +93,6 @@ async def run_agent(user_message: str, conversation_id: str | None = None) -> st
     response = result.final_output
 
     # Save agent response
-    await repo.add_message(conversation_id, "assistant", response)
+    await repo.add_message(internal_id, "assistant", response)
 
-    return response
+    return AgentResponse(response=response, conversation_id=encode(internal_id))

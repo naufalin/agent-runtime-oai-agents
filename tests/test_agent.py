@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_runtime.agents.runtime import create_agent, run_agent
+from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent
 from agent_runtime.db.models import Conversation, Message
 
 
@@ -28,7 +28,7 @@ def test_create_agent_has_instructions():
 async def test_run_agent_persists_messages():
     mock_db = AsyncMock()
     mock_repo = AsyncMock()
-    mock_repo.get_conversation.return_value = Conversation(id="test-123", title="Test")
+    mock_repo.get_conversation.return_value = Conversation(id=1, title="Test")
     mock_repo.add_message.return_value = Message(id=1, role="user", content="Hi")
 
     mock_result = AsyncMock()
@@ -39,12 +39,15 @@ async def test_run_agent_persists_messages():
         patch("agent_runtime.agents.runtime.ConversationRepo", return_value=mock_repo),
         patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
     ):
-        result = await run_agent("Hi there", conversation_id="test-123")
+        from agent_runtime.ids import encode
 
-        assert result == "Hello!"
+        result = await run_agent("Hi there", conversation_id=encode(1))
+
+        assert isinstance(result, AgentResponse)
+        assert result.response == "Hello!"
         assert mock_repo.add_message.call_count == 2
-        mock_repo.add_message.assert_any_call("test-123", "user", "Hi there")
-        mock_repo.add_message.assert_any_call("test-123", "assistant", "Hello!")
+        mock_repo.add_message.assert_any_call(1, "user", "Hi there")
+        mock_repo.add_message.assert_any_call(1, "assistant", "Hello!")
 
 
 @pytest.mark.asyncio
@@ -52,7 +55,7 @@ async def test_run_agent_creates_conversation_if_new():
     mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_repo.get_conversation.return_value = None  # new conversation
-    mock_repo.create_conversation.return_value = Conversation(id="new-123")
+    mock_repo.create_conversation.return_value = Conversation(id=42, title="First message")
     mock_repo.add_message.return_value = Message(id=1, role="user", content="msg")
 
     mock_result = AsyncMock()
@@ -63,7 +66,8 @@ async def test_run_agent_creates_conversation_if_new():
         patch("agent_runtime.agents.runtime.ConversationRepo", return_value=mock_repo),
         patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
     ):
-        result = await run_agent("First message", conversation_id="new-123")
+        result = await run_agent("First message")
 
+        assert isinstance(result, AgentResponse)
+        assert result.response == "Response"
         mock_repo.create_conversation.assert_called_once()
-        assert result == "Response"

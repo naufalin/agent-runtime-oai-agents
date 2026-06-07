@@ -28,4 +28,4 @@ class Database:
         """Yield an AsyncSession that auto-commits on success, rolls back on error."""
         assert self.engine is not None, "Database not connected — call connect() first"
         async with AsyncSession(self.engine, expire_on_commit=False) as session, session.begin():
-                yield session
+            yield session
