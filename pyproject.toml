@@ -16,14 +16,16 @@ dependencies = [
     "asyncpg>=0.31.0",
     "httpx>=0.28.1",
     "openai-agents>=0.17.4",
+    "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "python-dotenv>=1.2.2",
-    "sqlalchemy>=2.0.50",
+    "sqlalchemy[asyncio]>=2.0.50",
 ]
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",

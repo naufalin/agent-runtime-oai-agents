@@ -20,12 +20,12 @@ async def chat_loop(conversation_id: str | None = None) -> None:
     if conversation_id:
         existing = await repo.get_conversation(conversation_id)
         if existing:
-            print(f"Resuming conversation: {existing['title']}")
+            print(f"Resuming conversation: {existing.title}")
             # Print existing messages
             messages = await repo.get_messages(conversation_id)
             for msg in messages:
-                role = "You" if msg["role"] == "user" else "Agent"
-                print(f"  [{role}]: {msg['content'][:80]}...")
+                role = "You" if msg.role == "user" else "Agent"
+                print(f"  [{role}]: {msg.content[:80]}...")
             print()
         else:
             print(f"Conversation {conversation_id} not found, creating new one.")
@@ -52,8 +52,8 @@ async def chat_loop(conversation_id: str | None = None) -> None:
         if user_input.lower() == "history":
             messages = await repo.get_messages(conversation_id)
             for msg in messages:
-                role = "You" if msg["role"] == "user" else "Agent"
-                print(f"  [{role}]: {msg['content'][:200]}")
+                role = "You" if msg.role == "user" else "Agent"
+                print(f"  [{role}]: {msg.content[:200]}")
             print()
             continue
 
@@ -71,7 +71,7 @@ async def list_conversations() -> None:
     print(f"{'ID':<10} {'Title':<50} {'Updated'}")
     print("-" * 80)
     for c in convos:
-        print(f"{c['id'][:8]:<10} {c['title']:<50} {c['updated_at']}")
+        print(f"{c.id[:8]:<10} {c.title:<50} {c.updated_at}")
 
 
 def main() -> None:

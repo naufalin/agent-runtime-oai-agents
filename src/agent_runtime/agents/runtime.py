@@ -26,12 +26,12 @@ _db: Database | None = None
 
 
 async def get_db() -> Database:
-    """Get or create the database connection pool."""
+    """Get or create the database engine."""
     global _db
     if _db is None:
         settings = Settings()
         _db = Database(settings.database_url)
-        await _db.connect()
+        _db.connect()
     return _db
 
 
