@@ -94,11 +94,20 @@ async def run_agent(user_message: str, session_id: str | None = None) -> AgentRe
     # Save user message
     await repo.add_message(internal_id, "user", user_message)
 
-    # Run the agent with the active system prompt and persistence hooks
+    # Build conversation history for the agent
+    history = await repo.get_messages(internal_id)
+    input_items: list[dict[str, str]] = []
+    for msg in history:
+        # Include user messages and assistant replies
+        # Skip tool/system messages — SDK manages tool state, system prompt is on the agent
+        if msg.role in ("user", "assistant"):
+            input_items.append({"role": msg.role, "content": msg.content})
+
+    # Run the agent with the active system prompt, full history, and persistence hooks
     agent = create_agent(system_prompt)
     run_context = RunContext(session_id=internal_id, repo=repo)
     result = await Runner.run(
-        agent, input=user_message, context=run_context, hooks=_hooks,
+        agent, input=input_items, context=run_context, hooks=_hooks,  # type: ignore[arg-type]
     )
     response = result.final_output
 
