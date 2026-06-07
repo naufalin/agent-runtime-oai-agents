@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from agents import Agent, Runner
 
+from agent_runtime.agents.hooks import PersistenceHooks, RunContext
 from agent_runtime.config import Settings
 from agent_runtime.db.connection import Database
 from agent_runtime.db.prompt_repo import SystemPromptRepo
@@ -13,6 +14,8 @@ from agent_runtime.tools.country import get_country_info
 from agent_runtime.tools.currency import convert_currency
 from agent_runtime.tools.weather import get_weather
 from agent_runtime.tools.web_search import web_search
+
+_hooks = PersistenceHooks()
 
 _db: Database | None = None
 
@@ -91,9 +94,12 @@ async def run_agent(user_message: str, session_id: str | None = None) -> AgentRe
     # Save user message
     await repo.add_message(internal_id, "user", user_message)
 
-    # Run the agent with the active system prompt
+    # Run the agent with the active system prompt and persistence hooks
     agent = create_agent(system_prompt)
-    result = await Runner.run(agent, input=user_message)
+    run_context = RunContext(session_id=internal_id, repo=repo)
+    result = await Runner.run(
+        agent, input=user_message, context=run_context, hooks=_hooks,
+    )
     response = result.final_output
 
     # Save agent response

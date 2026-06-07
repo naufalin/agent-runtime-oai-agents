@@ -41,6 +41,8 @@ class Message(Base):
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"))
     role: Mapped[str] = mapped_column(String(20))  # "system", "user", "assistant", "tool"
     content: Mapped[str] = mapped_column(Text)
+    # Set for role='tool' messages — which tool was called
+    tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Set only for role='system' messages — links to the prompt template used
     system_prompt_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("system_prompts.id", ondelete="SET NULL"), nullable=True

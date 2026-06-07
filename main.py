@@ -74,6 +74,8 @@ async def chat_loop(session_id: str | None = None) -> None:
                     label = msg.role.capitalize()
                     if msg.role == "system":
                         label = f"System [prompt_id={msg.system_prompt_id}]"
+                    elif msg.role == "tool":
+                        label = f"Tool:{msg.tool_name}"
                     content = msg.content[:200].replace("\n", " ")
                     print(f"  [{label}]: {content}")
             else:

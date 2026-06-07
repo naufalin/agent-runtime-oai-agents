@@ -52,7 +52,7 @@ async def test_run_agent_inserts_system_message_for_new_session():
         patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
         patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
         patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
+        patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result) as mock_run,
     ):
         result = await run_agent("Hi there")
 
@@ -61,6 +61,10 @@ async def test_run_agent_inserts_system_message_for_new_session():
         mock_prompt_repo.seed_default.assert_called_once()
         mock_repo.create_session.assert_called_once()
         assert mock_repo.add_message.call_count == 3
+        # Verify hooks and context were passed
+        call_kwargs = mock_run.call_args
+        assert "hooks" in call_kwargs.kwargs
+        assert "context" in call_kwargs.kwargs
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ class SessionRepo:
         role: str,
         content: str,
         system_prompt_id: int | None = None,
+        tool_name: str | None = None,
     ) -> Message:
         async with self.db.session() as s:
             msg = Message(
@@ -38,6 +39,7 @@ class SessionRepo:
                 role=role,
                 content=content,
                 system_prompt_id=system_prompt_id,
+                tool_name=tool_name,
             )
             s.add(msg)
             await s.flush()
