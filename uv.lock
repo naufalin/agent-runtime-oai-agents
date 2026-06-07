@@ -13,6 +13,7 @@ dependencies = [
     { name = "openai-agents" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "sqlalchemy" },
 ]
 
@@ -32,6 +33,7 @@ requires-dist = [
     { name = "openai-agents", specifier = ">=0.17.4" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "sqlalchemy", specifier = ">=2.0.50" },
 ]
 

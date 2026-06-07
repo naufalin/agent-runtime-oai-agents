@@ -3,7 +3,11 @@
 import asyncio
 import uuid
 
-from agent_runtime.agents.runtime import run_agent
+from dotenv import load_dotenv
+
+load_dotenv()  # must run before importing agent modules (OpenAI SDK reads env at import)
+
+from agent_runtime.agents.runtime import run_agent  # noqa: E402
 
 
 async def chat_loop() -> None:
