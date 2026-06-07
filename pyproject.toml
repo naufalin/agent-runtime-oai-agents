@@ -37,7 +37,7 @@ dev = [
 ]
 
 [project.scripts]
-agent-runtime = "agent_runtime.api.app:run"
+agent-runtime = "main:main"
 agent-runtime-cli = "agent_runtime.cli:cli_main"
 
 [tool.ruff]
