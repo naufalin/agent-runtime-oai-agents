@@ -15,7 +15,11 @@ class Database:
 
     def connect(self) -> None:
         """Create the async engine (no actual connection until first query)."""
-        self.engine = create_async_engine(self.url, pool_size=5, max_overflow=2)
+        url = self.url
+        # Auto-fix: ensure async driver prefix for PostgreSQL
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        self.engine = create_async_engine(url, pool_size=5, max_overflow=2)
 
     async def disconnect(self) -> None:
         """Dispose of the engine and all pooled connections."""

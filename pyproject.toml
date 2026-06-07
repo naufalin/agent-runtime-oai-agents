@@ -16,6 +16,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "httpx>=0.28.1",
     "openai-agents>=0.17.4",
+    "psycopg2>=2.9.12",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
