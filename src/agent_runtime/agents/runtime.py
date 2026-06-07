@@ -107,7 +107,10 @@ async def run_agent(user_message: str, session_id: str | None = None) -> AgentRe
     agent = create_agent(system_prompt)
     run_context = RunContext(session_id=internal_id, repo=repo)
     result = await Runner.run(
-        agent, input=input_items, context=run_context, hooks=_hooks,  # type: ignore[arg-type]
+        agent,
+        input=input_items,
+        context=run_context,
+        hooks=_hooks,  # type: ignore[arg-type]
     )
     response = result.final_output
 
