@@ -1,4 +1,4 @@
-"""Agent runtime entry point — dispatches to CLI or API server."""
+"""Agent Runtime — API server is the primary interface."""
 
 import sys
 
@@ -10,14 +10,17 @@ load_dotenv()
 def main() -> None:
     args = sys.argv[1:]
 
-    if args and args[0] == "api":
+    if args and args[0] == "cli":
+        # CLI is the secondary interface: python main.py cli [command]
+        from agent_runtime.cli import cli_main
+
+        sys.argv = [sys.argv[0]] + args[1:]  # strip "cli" from argv
+        cli_main()
+    else:
+        # Default: start the API server
         import uvicorn
 
         uvicorn.run("agent_runtime.api.app:app", host="0.0.0.0", port=8000, reload=True)
-    else:
-        from agent_runtime.cli import cli_main
-
-        cli_main()
 
 
 if __name__ == "__main__":

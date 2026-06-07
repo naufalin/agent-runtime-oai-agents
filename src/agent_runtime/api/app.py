@@ -47,3 +47,10 @@ app.include_router(prompts.router)
 @app.get("/")
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+def run():
+    """Entry point for 'agent-runtime' command."""
+    import uvicorn
+
+    uvicorn.run("agent_runtime.api.app:app", host="0.0.0.0", port=8000, reload=True)

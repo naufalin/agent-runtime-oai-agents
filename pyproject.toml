@@ -37,8 +37,8 @@ dev = [
 ]
 
 [project.scripts]
-agent-runtime = "agent_runtime.cli:cli_main"
-agent-runtime-api = "agent_runtime.api.app:app"
+agent-runtime = "agent_runtime.api.app:run"
+agent-runtime-cli = "agent_runtime.cli:cli_main"
 
 [tool.ruff]
 target-version = "py312"
