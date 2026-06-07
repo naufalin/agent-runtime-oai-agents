@@ -8,23 +8,23 @@ from dotenv import load_dotenv
 load_dotenv()  # must run before importing agent modules (OpenAI SDK reads env at import)
 
 from agent_runtime.agents.runtime import get_db, run_agent, switch_prompt  # noqa: E402
-from agent_runtime.db.conversation_repo import ConversationRepo  # noqa: E402
 from agent_runtime.db.prompt_repo import SystemPromptRepo  # noqa: E402
+from agent_runtime.db.session_repo import SessionRepo  # noqa: E402
 from agent_runtime.ids import decode, encode  # noqa: E402
 
 
-async def chat_loop(conversation_id: str | None = None) -> None:
+async def chat_loop(session_id: str | None = None) -> None:
     db = await get_db()
-    repo = ConversationRepo(db)
+    repo = SessionRepo(db)
 
     # Track internal ID for history lookups
     internal_id: int | None = None
 
-    # Resume or create conversation
-    if conversation_id:
+    # Resume or create session
+    if session_id:
         try:
-            internal_id = decode(conversation_id)
-            existing = await repo.get_conversation(internal_id)
+            internal_id = decode(session_id)
+            existing = await repo.get_session(internal_id)
             if existing:
                 # Show active prompt
                 sys_msg = await repo.get_latest_system_message(internal_id)
@@ -43,15 +43,15 @@ async def chat_loop(conversation_id: str | None = None) -> None:
                     print(f"  [{role}]: {msg.content[:80]}...")
                 print()
             else:
-                print(f"Conversation {conversation_id} not found, starting new one.")
-                conversation_id = None
+                print(f"Session {session_id} not found, starting new one.")
+                session_id = None
                 internal_id = None
         except ValueError:
-            print(f"Invalid conversation ID: {conversation_id}")
-            conversation_id = None
+            print(f"Invalid session ID: {session_id}")
+            session_id = None
 
-    if not conversation_id:
-        print("Starting new conversation...")
+    if not session_id:
+        print("Starting new session...")
 
     print("Commands: 'quit', 'history', 'prompts', 'switch <name>'\n")
 
@@ -85,22 +85,22 @@ async def chat_loop(conversation_id: str | None = None) -> None:
             continue
         if user_input.lower().startswith("switch "):
             name = user_input[7:].strip()
-            if conversation_id:
+            if session_id:
                 try:
-                    await switch_prompt(conversation_id, name)
+                    await switch_prompt(session_id, name)
                     print(f"  Switched to prompt: {name}\n")
                 except ValueError as e:
                     print(f"  Error: {e}\n")
             else:
-                print("  Start a conversation first.\n")
+                print("  Start a session first.\n")
             continue
 
-        result = await run_agent(user_input, conversation_id=conversation_id)
-        conversation_id = result.conversation_id
+        result = await run_agent(user_input, session_id=session_id)
+        session_id = result.session_id
         if internal_id is None:
-            internal_id = decode(conversation_id)
+            internal_id = decode(session_id)
         print(f"\nAgent: {result.response}")
-        print(f"  [id: {conversation_id}]\n")
+        print(f"  [id: {session_id}]\n")
 
 
 async def _list_prompts() -> None:
@@ -116,27 +116,27 @@ async def _list_prompts() -> None:
     print()
 
 
-async def list_conversations() -> None:
+async def list_sessions() -> None:
     db = await get_db()
-    repo = ConversationRepo(db)
+    repo = SessionRepo(db)
     prompt_repo = SystemPromptRepo(db)
-    convos = await repo.list_conversations(limit=10)
-    if not convos:
-        print("No conversations yet.")
+    sessions = await repo.list_sessions(limit=10)
+    if not sessions:
+        print("No sessions yet.")
         return
     print(f"{'ID':<12} {'Title':<40} {'Prompt':<12} {'Updated'}")
     print("-" * 80)
-    for c in convos:
-        encoded = encode(c.id)
+    for s in sessions:
+        encoded = encode(s.id)
         # Get active prompt name
-        sys_msg = await repo.get_latest_system_message(c.id)
+        sys_msg = await repo.get_latest_system_message(s.id)
         prompt_name = "-"
         if sys_msg and sys_msg.system_prompt_id:
             p = await prompt_repo.get_by_id(sys_msg.system_prompt_id)
             if p:
                 prompt_name = p.name
-        ts = c.updated_at.strftime("%Y-%m-%d %H:%M") if c.updated_at else ""
-        print(f"{encoded:<12} {c.title:<40} {prompt_name:<12} {ts}")
+        ts = s.updated_at.strftime("%Y-%m-%d %H:%M") if s.updated_at else ""
+        print(f"{encoded:<12} {s.title:<40} {prompt_name:<12} {ts}")
 
 
 async def create_prompt(name: str, content: str) -> None:
@@ -144,7 +144,7 @@ async def create_prompt(name: str, content: str) -> None:
     repo = SystemPromptRepo(db)
     existing = await repo.get_by_name(name)
     if existing:
-        print(f"Prompt '{name}' already exists. Use 'update-prompt' to modify it.")
+        print(f"Prompt '{name}' already exists.")
         return
     await repo.create(name, content)
     print(f"Created prompt: {name}")
@@ -156,13 +156,13 @@ def main() -> None:
     if not args:
         asyncio.run(chat_loop())
     elif args[0] == "list":
-        asyncio.run(list_conversations())
+        asyncio.run(list_sessions())
     elif args[0] == "resume":
-        cid = args[1] if len(args) > 1 else None
-        if not cid:
-            print("Usage: python main.py resume <conversation_id>")
+        sid = args[1] if len(args) > 1 else None
+        if not sid:
+            print("Usage: python main.py resume <session_id>")
             sys.exit(1)
-        asyncio.run(chat_loop(cid))
+        asyncio.run(chat_loop(sid))
     elif args[0] == "prompts":
         asyncio.run(_list_prompts())
     elif args[0] == "create-prompt":

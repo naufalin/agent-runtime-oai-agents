@@ -6,8 +6,8 @@ from agents import Agent, Runner
 
 from agent_runtime.config import Settings
 from agent_runtime.db.connection import Database
-from agent_runtime.db.conversation_repo import ConversationRepo
 from agent_runtime.db.prompt_repo import SystemPromptRepo
+from agent_runtime.db.session_repo import SessionRepo
 from agent_runtime.ids import decode, encode
 from agent_runtime.tools.country import get_country_info
 from agent_runtime.tools.currency import convert_currency
@@ -40,43 +40,43 @@ def create_agent(system_prompt: str) -> Agent:
 
 @dataclass
 class AgentResponse:
-    """Response from run_agent with the conversation ID for follow-up messages."""
+    """Response from run_agent with the session ID for follow-up messages."""
 
     response: str
-    conversation_id: str  # encoded ID for external use
+    session_id: str  # encoded ID for external use
 
 
-async def run_agent(user_message: str, conversation_id: str | None = None) -> AgentResponse:
+async def run_agent(user_message: str, session_id: str | None = None) -> AgentResponse:
     """Run the agent with a user message, persist to DB, and return the response.
 
     Args:
         user_message: The user's message text.
-        conversation_id: Encoded conversation ID (from ids.encode). None to start new.
+        session_id: Encoded session ID (from ids.encode). None to start new.
 
     Returns:
-        AgentResponse with the agent's reply and the conversation ID.
+        AgentResponse with the agent's reply and the session ID.
     """
     db = await get_db()
-    repo = ConversationRepo(db)
+    repo = SessionRepo(db)
     prompt_repo = SystemPromptRepo(db)
 
-    # Resolve conversation: decode existing or create new
+    # Resolve session: decode existing or create new
     internal_id: int | None = None
-    if conversation_id is not None:
+    if session_id is not None:
         try:
-            internal_id = decode(conversation_id)
-            existing = await repo.get_conversation(internal_id)
+            internal_id = decode(session_id)
+            existing = await repo.get_session(internal_id)
             if not existing:
                 internal_id = None
         except ValueError:
             internal_id = None
 
     if internal_id is None:
-        # New conversation — seed default prompt and insert system message
+        # New session — seed default prompt and insert system message
         default_prompt = await prompt_repo.seed_default()
         title = user_message[:50] + ("..." if len(user_message) > 50 else "")
-        conv = await repo.create_conversation(title)
-        internal_id = conv.id
+        sess = await repo.create_session(title)
+        internal_id = sess.id
         await repo.add_message(
             internal_id,
             "system",
@@ -84,7 +84,7 @@ async def run_agent(user_message: str, conversation_id: str | None = None) -> Ag
             system_prompt_id=default_prompt.id,
         )
 
-    # Load the active system prompt from conversation history
+    # Load the active system prompt from session history
     system_msg = await repo.get_latest_system_message(internal_id)
     system_prompt = system_msg.content if system_msg else ""
 
@@ -99,22 +99,22 @@ async def run_agent(user_message: str, conversation_id: str | None = None) -> Ag
     # Save agent response
     await repo.add_message(internal_id, "assistant", response)
 
-    return AgentResponse(response=response, conversation_id=encode(internal_id))
+    return AgentResponse(response=response, session_id=encode(internal_id))
 
 
-async def switch_prompt(conversation_id: str, prompt_name: str) -> str:
-    """Switch the system prompt for an existing conversation.
+async def switch_prompt(session_id: str, prompt_name: str) -> str:
+    """Switch the system prompt for an existing session.
 
     Inserts a new system message with the named prompt. Returns the prompt name.
     """
     db = await get_db()
-    repo = ConversationRepo(db)
+    repo = SessionRepo(db)
     prompt_repo = SystemPromptRepo(db)
 
-    internal_id = decode(conversation_id)
-    conv = await repo.get_conversation(internal_id)
-    if not conv:
-        raise ValueError(f"Conversation not found: {conversation_id}")
+    internal_id = decode(session_id)
+    sess = await repo.get_session(internal_id)
+    if not sess:
+        raise ValueError(f"Session not found: {session_id}")
 
     prompt = await prompt_repo.get_by_name(prompt_name)
     if not prompt:

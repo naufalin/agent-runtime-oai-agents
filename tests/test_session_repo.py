@@ -1,0 +1,125 @@
+"""Tests for session repository using real async SQLite."""
+
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from agent_runtime.db.connection import Database
+from agent_runtime.db.models import Base
+from agent_runtime.db.session_repo import SessionRepo
+
+
+@pytest.fixture
+async def db():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    database = Database("sqlite+aiosqlite:///:memory:")
+    database.engine = engine
+    yield database
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_session(db):
+    repo = SessionRepo(db)
+    result = await repo.create_session("Test")
+    assert result.id is not None
+    assert result.id > 0
+    assert result.title == "Test"
+
+
+@pytest.mark.asyncio
+async def test_create_session_auto_id(db):
+    repo = SessionRepo(db)
+    s1 = await repo.create_session("First")
+    s2 = await repo.create_session("Second")
+    assert s2.id > s1.id
+
+
+@pytest.mark.asyncio
+async def test_update_title(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Old Title")
+    await repo.update_title(sess.id, "New Title")
+    updated = await repo.get_session(sess.id)
+    assert updated is not None
+    assert updated.title == "New Title"
+
+
+@pytest.mark.asyncio
+async def test_add_message(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    result = await repo.add_message(sess.id, "user", "Hello!")
+    assert result.session_id == sess.id
+    assert result.role == "user"
+    assert result.content == "Hello!"
+
+
+@pytest.mark.asyncio
+async def test_get_messages(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    await repo.add_message(sess.id, "user", "Hello")
+    await repo.add_message(sess.id, "assistant", "Hi!")
+    messages = await repo.get_messages(sess.id)
+    assert len(messages) == 2
+    assert messages[0].role == "user"
+    assert messages[1].role == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_list_sessions(db):
+    repo = SessionRepo(db)
+    await repo.create_session("First")
+    await repo.create_session("Second")
+    sessions = await repo.list_sessions(limit=10)
+    assert len(sessions) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_session_found(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    result = await repo.get_session(sess.id)
+    assert result is not None
+    assert result.id == sess.id
+
+
+@pytest.mark.asyncio
+async def test_get_session_not_found(db):
+    repo = SessionRepo(db)
+    result = await repo.get_session(99999)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_add_message_with_system_prompt_id(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    result = await repo.add_message(sess.id, "system", "You are helpful.", system_prompt_id=42)
+    assert result.role == "system"
+    assert result.system_prompt_id == 42
+
+
+@pytest.mark.asyncio
+async def test_get_latest_system_message(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    await repo.add_message(sess.id, "system", "First prompt", system_prompt_id=1)
+    await repo.add_message(sess.id, "user", "Hello")
+    await repo.add_message(sess.id, "assistant", "Hi!")
+    await repo.add_message(sess.id, "system", "Second prompt", system_prompt_id=2)
+    latest = await repo.get_latest_system_message(sess.id)
+    assert latest is not None
+    assert latest.content == "Second prompt"
+    assert latest.system_prompt_id == 2
+
+
+@pytest.mark.asyncio
+async def test_get_latest_system_message_none_if_no_system(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    await repo.add_message(sess.id, "user", "Hello")
+    result = await repo.get_latest_system_message(sess.id)
+    assert result is None

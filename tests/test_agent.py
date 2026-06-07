@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent
-from agent_runtime.db.models import Conversation, Message, SystemPrompt
+from agent_runtime.db.models import Message, Session, SystemPrompt
 
 
 def test_create_agent_has_all_tools():
@@ -20,22 +20,20 @@ def test_create_agent_has_name():
 
 def test_create_agent_uses_prompt():
     agent = create_agent("You are a pirate.")
-    instructions = agent.instructions
-    assert instructions == "You are a pirate."
+    assert agent.instructions == "You are a pirate."
 
 
 @pytest.mark.asyncio
-async def test_run_agent_inserts_system_message_for_new_conversation():
+async def test_run_agent_inserts_system_message_for_new_session():
     mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
 
-    # New conversation flow
-    mock_repo.get_conversation.return_value = None
-    mock_repo.create_conversation.return_value = Conversation(id=1, title="Test")
+    mock_repo.get_session.return_value = None
+    mock_repo.create_session.return_value = Session(id=1, title="Test")
     mock_repo.get_latest_system_message.return_value = Message(
         id=1,
-        conversation_id=1,
+        session_id=1,
         role="system",
         content="Default prompt",
     )
@@ -52,7 +50,7 @@ async def test_run_agent_inserts_system_message_for_new_conversation():
 
     with (
         patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.ConversationRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
         patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
         patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
     ):
@@ -60,11 +58,8 @@ async def test_run_agent_inserts_system_message_for_new_conversation():
 
         assert isinstance(result, AgentResponse)
         assert result.response == "Hello!"
-        # Should have seeded default prompt
         mock_prompt_repo.seed_default.assert_called_once()
-        # Should have created conversation
-        mock_repo.create_conversation.assert_called_once()
-        # 3 messages: system + user + assistant
+        mock_repo.create_session.assert_called_once()
         assert mock_repo.add_message.call_count == 3
 
 
@@ -74,10 +69,10 @@ async def test_run_agent_uses_latest_system_prompt():
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
 
-    mock_repo.get_conversation.return_value = Conversation(id=1, title="Test")
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
     mock_repo.get_latest_system_message.return_value = Message(
         id=5,
-        conversation_id=1,
+        session_id=1,
         role="system",
         content="You are a pirate.",
     )
@@ -88,14 +83,13 @@ async def test_run_agent_uses_latest_system_prompt():
 
     with (
         patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.ConversationRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
         patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
         patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
     ):
         from agent_runtime.ids import encode
 
-        result = await run_agent("Ahoy", conversation_id=encode(1))
+        result = await run_agent("Ahoy", session_id=encode(1))
 
         assert result.response == "Arr!"
-        # Should NOT have seeded — resuming existing conversation
         mock_prompt_repo.seed_default.assert_not_called()

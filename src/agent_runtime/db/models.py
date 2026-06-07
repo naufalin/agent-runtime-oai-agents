@@ -1,4 +1,4 @@
-"""SQLAlchemy models for conversation persistence."""
+"""SQLAlchemy models for session persistence."""
 
 from datetime import datetime
 
@@ -11,7 +11,7 @@ class Base(DeclarativeBase):
 
 
 class SystemPrompt(Base):
-    """Versioned system prompts that can be reused across conversations."""
+    """Versioned system prompts that can be reused across sessions."""
 
     __tablename__ = "system_prompts"
 
@@ -21,26 +21,24 @@ class SystemPrompt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class Conversation(Base):
-    __tablename__ = "conversations"
+class Session(Base):
+    __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    title: Mapped[str] = mapped_column(String(255), default="New Conversation")
+    title: Mapped[str] = mapped_column(String(255), default="New Session")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    messages: Mapped[list["Message"]] = relationship(back_populates="conversation")
+    messages: Mapped[list["Message"]] = relationship(back_populates="session")
 
 
 class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    conversation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("conversations.id", ondelete="CASCADE")
-    )
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"))
     role: Mapped[str] = mapped_column(String(20))  # "system", "user", "assistant", "tool"
     content: Mapped[str] = mapped_column(Text)
     # Set only for role='system' messages — links to the prompt template used
@@ -49,4 +47,4 @@ class Message(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    session: Mapped["Session"] = relationship(back_populates="messages")
