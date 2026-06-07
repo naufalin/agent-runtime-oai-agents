@@ -10,6 +10,17 @@ class Base(DeclarativeBase):
     pass
 
 
+class SystemPrompt(Base):
+    """Versioned system prompts that can be reused across conversations."""
+
+    __tablename__ = "system_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -30,8 +41,12 @@ class Message(Base):
     conversation_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("conversations.id", ondelete="CASCADE")
     )
-    role: Mapped[str] = mapped_column(String(20))  # "user", "assistant", "tool"
+    role: Mapped[str] = mapped_column(String(20))  # "system", "user", "assistant", "tool"
     content: Mapped[str] = mapped_column(Text)
+    # Set only for role='system' messages — links to the prompt template used
+    system_prompt_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("system_prompts.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")

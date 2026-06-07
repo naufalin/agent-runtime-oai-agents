@@ -107,3 +107,40 @@ async def test_get_conversation_not_found(db):
     result = await repo.get_conversation(99999)
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_add_message_with_system_prompt_id(db):
+    repo = ConversationRepo(db)
+    conv = await repo.create_conversation("Test")
+    result = await repo.add_message(conv.id, "system", "You are helpful.", system_prompt_id=42)
+
+    assert result.role == "system"
+    assert result.system_prompt_id == 42
+
+
+@pytest.mark.asyncio
+async def test_get_latest_system_message(db):
+    repo = ConversationRepo(db)
+    conv = await repo.create_conversation("Test")
+    await repo.add_message(conv.id, "system", "First prompt", system_prompt_id=1)
+    await repo.add_message(conv.id, "user", "Hello")
+    await repo.add_message(conv.id, "assistant", "Hi!")
+    await repo.add_message(conv.id, "system", "Second prompt", system_prompt_id=2)
+
+    latest = await repo.get_latest_system_message(conv.id)
+
+    assert latest is not None
+    assert latest.content == "Second prompt"
+    assert latest.system_prompt_id == 2
+
+
+@pytest.mark.asyncio
+async def test_get_latest_system_message_none_if_no_system(db):
+    repo = ConversationRepo(db)
+    conv = await repo.create_conversation("Test")
+    await repo.add_message(conv.id, "user", "Hello")
+
+    result = await repo.get_latest_system_message(conv.id)
+
+    assert result is None

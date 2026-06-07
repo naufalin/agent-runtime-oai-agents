@@ -25,12 +25,37 @@ class ConversationRepo:
             if conv:
                 conv.title = title
 
-    async def add_message(self, conversation_id: int, role: str, content: str) -> Message:
+    async def add_message(
+        self,
+        conversation_id: int,
+        role: str,
+        content: str,
+        system_prompt_id: int | None = None,
+    ) -> Message:
         async with self.db.session() as session:
-            msg = Message(conversation_id=conversation_id, role=role, content=content)
+            msg = Message(
+                conversation_id=conversation_id,
+                role=role,
+                content=content,
+                system_prompt_id=system_prompt_id,
+            )
             session.add(msg)
             await session.flush()
             return msg
+
+    async def get_latest_system_message(self, conversation_id: int) -> Message | None:
+        """Get the most recent system message in a conversation."""
+        async with self.db.session() as session:
+            result = await session.execute(
+                select(Message)
+                .where(
+                    Message.conversation_id == conversation_id,
+                    Message.role == "system",
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
 
     async def get_messages(self, conversation_id: int) -> list[Message]:
         async with self.db.session() as session:

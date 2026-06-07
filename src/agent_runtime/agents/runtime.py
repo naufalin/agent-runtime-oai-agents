@@ -7,21 +7,12 @@ from agents import Agent, Runner
 from agent_runtime.config import Settings
 from agent_runtime.db.connection import Database
 from agent_runtime.db.conversation_repo import ConversationRepo
+from agent_runtime.db.prompt_repo import SystemPromptRepo
 from agent_runtime.ids import decode, encode
 from agent_runtime.tools.country import get_country_info
 from agent_runtime.tools.currency import convert_currency
 from agent_runtime.tools.weather import get_weather
 from agent_runtime.tools.web_search import web_search
-
-SYSTEM_PROMPT = """You are a helpful assistant with access to these tools:
-- web_search: Search the web for current information (TinyFish)
-- get_weather: Get current weather for any city (Open-Meteo)
-- convert_currency: Convert between currencies with live rates (Frankfurter/ECB)
-- get_country_info: Look up country details — capital, population, currency,
-  languages (REST Countries)
-
-Use tools when the user's question requires real-time data or lookup.
-Be concise and factual. When showing results, format them clearly."""
 
 _db: Database | None = None
 
@@ -36,12 +27,12 @@ async def get_db() -> Database:
     return _db
 
 
-def create_agent() -> Agent:
-    """Create the configured runtime agent."""
+def create_agent(system_prompt: str) -> Agent:
+    """Create the configured runtime agent with the given system prompt."""
     settings = Settings()
     return Agent(
         name="RuntimeAgent",
-        instructions=SYSTEM_PROMPT,
+        instructions=system_prompt,
         model=settings.openai_model,
         tools=[web_search, get_weather, convert_currency, get_country_info],
     )
@@ -63,10 +54,11 @@ async def run_agent(user_message: str, conversation_id: str | None = None) -> Ag
         conversation_id: Encoded conversation ID (from ids.encode). None to start new.
 
     Returns:
-        The agent's response text.
+        AgentResponse with the agent's reply and the conversation ID.
     """
     db = await get_db()
     repo = ConversationRepo(db)
+    prompt_repo = SystemPromptRepo(db)
 
     # Resolve conversation: decode existing or create new
     internal_id: int | None = None
@@ -80,15 +72,27 @@ async def run_agent(user_message: str, conversation_id: str | None = None) -> Ag
             internal_id = None
 
     if internal_id is None:
+        # New conversation — seed default prompt and insert system message
+        default_prompt = await prompt_repo.seed_default()
         title = user_message[:50] + ("..." if len(user_message) > 50 else "")
         conv = await repo.create_conversation(title)
         internal_id = conv.id
+        await repo.add_message(
+            internal_id,
+            "system",
+            default_prompt.content,
+            system_prompt_id=default_prompt.id,
+        )
+
+    # Load the active system prompt from conversation history
+    system_msg = await repo.get_latest_system_message(internal_id)
+    system_prompt = system_msg.content if system_msg else ""
 
     # Save user message
     await repo.add_message(internal_id, "user", user_message)
 
-    # Run the agent
-    agent = create_agent()
+    # Run the agent with the active system prompt
+    agent = create_agent(system_prompt)
     result = await Runner.run(agent, input=user_message)
     response = result.final_output
 
@@ -96,3 +100,30 @@ async def run_agent(user_message: str, conversation_id: str | None = None) -> Ag
     await repo.add_message(internal_id, "assistant", response)
 
     return AgentResponse(response=response, conversation_id=encode(internal_id))
+
+
+async def switch_prompt(conversation_id: str, prompt_name: str) -> str:
+    """Switch the system prompt for an existing conversation.
+
+    Inserts a new system message with the named prompt. Returns the prompt name.
+    """
+    db = await get_db()
+    repo = ConversationRepo(db)
+    prompt_repo = SystemPromptRepo(db)
+
+    internal_id = decode(conversation_id)
+    conv = await repo.get_conversation(internal_id)
+    if not conv:
+        raise ValueError(f"Conversation not found: {conversation_id}")
+
+    prompt = await prompt_repo.get_by_name(prompt_name)
+    if not prompt:
+        raise ValueError(f"Prompt not found: {prompt_name}")
+
+    await repo.add_message(
+        internal_id,
+        "system",
+        prompt.content,
+        system_prompt_id=prompt.id,
+    )
+    return prompt.name
