@@ -34,7 +34,7 @@ def create_agent(system_prompt: str) -> Agent:
     """Create the configured runtime agent with the given system prompt."""
     settings = Settings()
     return Agent(
-        name="RuntimeAgent",
+        name="MainAgent",
         instructions=system_prompt,
         model=settings.openai_model,
         tools=[web_search, get_weather, convert_currency, get_country_info],

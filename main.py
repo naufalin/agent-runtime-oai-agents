@@ -10,7 +10,6 @@ load_dotenv()
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "cli":
-        # CLI is the secondary interface: python main.py cli [command]
         from agent_runtime.cli import cli_main
 
         sys.argv = [sys.argv[0]] + sys.argv[2:]  # strip "cli" from argv

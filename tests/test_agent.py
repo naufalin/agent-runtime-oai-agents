@@ -15,7 +15,7 @@ def test_create_agent_has_all_tools():
 
 def test_create_agent_has_name():
     agent = create_agent("test prompt")
-    assert agent.name == "RuntimeAgent"
+    assert agent.name == "MainAgent"
 
 
 def test_create_agent_uses_prompt():

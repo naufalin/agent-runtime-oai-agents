@@ -1,9 +1,10 @@
-"""Currency conversion tool using Frankfurter API (ECB rates, free, no key)."""
+"""Currency conversion tool using Frankfurter API v2 (free, no key)."""
 
 import httpx
+
 from agents import function_tool
 
-FRANKFURTER_URL = "https://api.frankfurter.dev/latest"
+FRANKFURTER_BASE = "https://api.frankfurter.dev/v2"
 
 _client: httpx.AsyncClient | None = None
 
@@ -16,7 +17,7 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def _convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
-    """Convert an amount between currencies using live exchange rates (raw implementation).
+    """Convert an amount between currencies using live exchange rates.
 
     Args:
         amount: Amount to convert.
@@ -29,17 +30,21 @@ async def _convert_currency(amount: float, from_currency: str, to_currency: str)
 
     try:
         response = await client.get(
-            FRANKFURTER_URL,
-            params={"amount": amount, "from": from_currency, "to": to_currency},
+            f"{FRANKFURTER_BASE}/rate/{from_currency}/{to_currency}",
         )
         response.raise_for_status()
     except httpx.HTTPStatusError:
         return f"Error: Invalid currency code(s) — {from_currency} or {to_currency} not supported."
 
     data = response.json()
-    rate = data["rates"][to_currency]
+    rate = data["rate"]
+    converted = amount * rate
 
-    return f"{amount:,.2f} {from_currency} = {rate:,.2f} {to_currency}\nDate: {data['date']}"
+    return (
+        f"{amount:,.2f} {from_currency} = {converted:,.2f} {to_currency}\n"
+        f"Rate: 1 {from_currency} = {rate} {to_currency}\n"
+        f"Date: {data['date']}"
+    )
 
 
 convert_currency = function_tool(_convert_currency)
