@@ -10,7 +10,7 @@ from agent_runtime.db.models import Message, Session, SystemPrompt
 
 def test_create_agent_has_all_tools():
     agent = create_agent("test prompt")
-    assert len(agent.tools) == 7
+    assert len(agent.tools) == 5
 
 
 def test_create_agent_has_name():
