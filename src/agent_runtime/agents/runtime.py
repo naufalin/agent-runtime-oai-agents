@@ -132,6 +132,94 @@ async def run_agent(user_message: str, session_id: str | None = None) -> AgentRe
     return AgentResponse(response=response, session_id=encode(internal_id))
 
 
+async def run_agent_streamed(user_message: str, session_id: str | None = None):
+    """Stream agent events as async generator of dicts.
+
+    Yields dicts with 'type' key: text_delta, tool_start, tool_end, done, error.
+    """
+    from agents.items import ItemHelpers
+    from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+
+    db = await get_db()
+    repo = SessionRepo(db)
+    prompt_repo = SystemPromptRepo(db)
+
+    # Resolve session (same logic as run_agent)
+    internal_id: int | None = None
+    if session_id is not None:
+        try:
+            internal_id = decode(session_id)
+            existing = await repo.get_session(internal_id)
+            if not existing:
+                internal_id = None
+        except ValueError:
+            internal_id = None
+
+    if internal_id is None:
+        default_prompt = await prompt_repo.seed_default()
+        title = user_message[:50] + ("..." if len(user_message) > 50 else "")
+        sess = await repo.create_session(title)
+        internal_id = sess.id
+        await repo.add_message(
+            internal_id, "system", default_prompt.content,
+            system_prompt_id=default_prompt.id,
+        )
+
+    system_msg = await repo.get_latest_system_message(internal_id)
+    system_prompt = system_msg.content if system_msg else ""
+
+    await repo.add_message(internal_id, "user", user_message)
+
+    history = await repo.get_messages(internal_id)
+    input_items = []
+    for msg in history:
+        if msg.role in ("user", "assistant"):
+            input_items.append({"role": msg.role, "content": msg.content})
+
+    agent = create_agent(system_prompt)
+    run_context = RunContext(session_id=internal_id, repo=repo)
+
+    result = Runner.run_streamed(
+        agent,
+        input=input_items,
+        context=run_context,
+        hooks=_hooks,
+    )
+
+    full_text = ""
+    try:
+        async for event in result.stream_events():
+            if isinstance(event, RawResponsesStreamEvent):
+                data = event.data
+                if hasattr(data, "delta") and isinstance(data.delta, str) and data.delta:
+                    full_text += data.delta
+                    yield {"type": "text_delta", "delta": data.delta}
+
+            elif isinstance(event, RunItemStreamEvent):
+                if event.name == "tool_called":
+                    tool_name = getattr(event.item, "tool_name", "tool")
+                    yield {"type": "tool_start", "tool": tool_name}
+                elif event.name == "tool_output":
+                    tool_name = getattr(event.item, "tool_name", "tool")
+                    yield {"type": "tool_end", "tool": tool_name}
+                elif event.name == "message_output_created":
+                    text = ItemHelpers.text_message_output(event.item)
+                    if text and text != full_text:
+                        remaining = text[len(full_text):]
+                        if remaining:
+                            yield {"type": "text_delta", "delta": remaining}
+                        full_text = text
+
+        # Save final assistant response
+        if full_text:
+            await repo.add_message(internal_id, "assistant", full_text)
+
+        yield {"type": "done", "session_id": encode(internal_id)}
+
+    except Exception as exc:
+        yield {"type": "error", "message": str(exc)}
+
+
 async def switch_prompt(session_id: str, prompt_name: str) -> str:
     """Switch the system prompt for an existing session.
 
