@@ -1,7 +1,6 @@
 """Currency conversion tool using Frankfurter API v2 (free, no key)."""
 
 import httpx
-
 from agents import function_tool
 
 FRANKFURTER_BASE = "https://api.frankfurter.dev/v2"

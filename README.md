@@ -80,12 +80,26 @@ agent-runtime-cli            # starts CLI
 
 ## Tools
 
-| Tool               | API            | Auth     | Description                              |
-|--------------------|----------------|----------|------------------------------------------|
-| `web_search`       | TinyFish       | API key  | Web search with geo-targeting            |
-| `get_weather`      | Open-Meteo     | None     | Current weather for any city             |
-| `convert_currency` | Frankfurter    | None     | Live ECB exchange rates                  |
-| `get_country_info` | REST Countries | None     | Capital, population, currencies, languages |
+### Free (no credits)
+
+| Tool         | API            | Auth    | Description                                          |
+|--------------|----------------|---------|------------------------------------------------------|
+| `web_search` | TinyFish Search | API key | Web search with geo-targeting and pagination         |
+| `web_fetch`  | TinyFish Fetch  | API key | Extract clean content from URLs (batch, PDF support) |
+| `get_weather`    | Open-Meteo     | None    | Current weather for any city                         |
+| `convert_currency` | Frankfurter    | None    | Live ECB exchange rates                              |
+| `get_country_info` | REST Countries | None    | Capital, population, currencies, languages           |
+
+### Paid (uses TinyFish credits — reserved for future use)
+
+| Tool          | API              | Description                                        |
+|---------------|------------------|----------------------------------------------------|
+| `web_agent`   | TinyFish Agent   | Goal-based browser automation on any website       |
+| `web_browser` | TinyFish Browser | Create remote browser session for Playwright/CDP   |
+
+> **Note:** `web_agent` and `web_browser` are reserved for future use. 
+> They consume TinyFish credits and are most useful when the runtime
+> itself needs to drive browser automation programmatically.
 
 Tool calls and responses are automatically persisted via `RunHooks`.
 
@@ -134,7 +148,11 @@ src/agent_runtime/
     session_repo.py                      Session/message CRUD
     prompt_repo.py                       System prompt CRUD
   tools/
-    web_search.py                        TinyFish Search API
+    _tinyfish_common.py                   Shared TinyFish client, auth, retry
+    web_search.py                         TinyFish Search API (free)
+    web_fetch.py                          TinyFish Fetch API (free, batch)
+    web_agent.py                          TinyFish Agent API (credits, future use)
+    web_browser.py                        TinyFish Browser API (credits, future use)
     weather.py                           Open-Meteo
     currency.py                          Frankfurter / ECB
     country.py                           REST Countries
@@ -157,7 +175,7 @@ Session IDs are integers internally, exposed as opaque strings via [sqids](https
 ```bash
 uv run ruff check .          # lint
 uv run ruff format .         # format
-uv run pytest -v             # test (49 tests)
+uv run pytest -v             # test (89 tests)
 uv run pytest --cov          # coverage
 ```
 
@@ -168,4 +186,4 @@ uv run pytest --cov          # coverage
 | `OPENAI_API_KEY`   | Yes      | —                              | OpenAI API key               |
 | `OPENAI_MODEL`     | No       | `gpt-5.4-mini`                | Model for the agent          |
 | `DATABASE_URL`     | No       | `postgresql://localhost:5432/agent_runtime` | PostgreSQL connection |
-| `TINYFISH_API_KEY` | No       | —                              | TinyFish web search API key  |
+| `TINYFISH_API_KEY` | No       | —                              | TinyFish API key (search+fetch free, agent+browser use credits) |

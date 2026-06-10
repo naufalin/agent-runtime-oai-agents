@@ -13,7 +13,11 @@ from agent_runtime.ids import decode, encode
 from agent_runtime.tools.country import get_country_info
 from agent_runtime.tools.currency import convert_currency
 from agent_runtime.tools.weather import get_weather
+from agent_runtime.tools.web_fetch import web_fetch
 from agent_runtime.tools.web_search import web_search
+
+# from agent_runtime.tools.web_agent import web_agent
+# from agent_runtime.tools.web_browser import web_browser
 
 _hooks = PersistenceHooks()
 
@@ -37,7 +41,15 @@ def create_agent(system_prompt: str) -> Agent:
         name="MainAgent",
         instructions=system_prompt,
         model=settings.openai_model,
-        tools=[web_search, get_weather, convert_currency, get_country_info],
+        tools=[
+            web_search,
+            web_fetch,
+            # web_agent, # NOTE: for future use
+            # web_browser, # NOTE: for future user
+            get_weather,
+            convert_currency,
+            get_country_info,
+        ],
     )
 
 

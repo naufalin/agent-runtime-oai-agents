@@ -19,12 +19,14 @@ def _make_response(json_data: dict, status_code: int = 200):
 @pytest.mark.asyncio
 async def test_convert_currency_success():
     mock_client = AsyncMock()
-    mock_client.get.return_value = _make_response({
-        "base": "USD",
-        "quote": "EUR",
-        "rate": 0.925,
-        "date": "2026-06-08",
-    })
+    mock_client.get.return_value = _make_response(
+        {
+            "base": "USD",
+            "quote": "EUR",
+            "rate": 0.925,
+            "date": "2026-06-08",
+        }
+    )
 
     with patch("agent_runtime.tools.currency._get_client", return_value=mock_client):
         result = await convert_currency(100, "USD", "EUR")

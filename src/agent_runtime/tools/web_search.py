@@ -1,48 +1,44 @@
-"""Web search tool powered by TinyFish Search API."""
+"""Web search tool powered by TinyFish Search API (free, no credits)..
 
-import os
+Endpoint: GET https://api.search.tinyfish.ai
+Docs: https://docs.tinyfish.ai/search-api
+Rate limit: 30 req/min (free tier).
+"""
 
-import httpx
 from agents import function_tool
+
+from agent_runtime.tools._tinyfish_common import tinyfish_request
 
 TINYFISH_SEARCH_URL = "https://api.search.tinyfish.ai"
 
-_client: httpx.AsyncClient | None = None
 
-
-def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(
-            headers={"X-API-Key": os.environ.get("TINYFISH_API_KEY", "")},
-            timeout=15.0,
-        )
-    return _client
-
-
-async def _web_search(query: str, location: str = "US", language: str = "en") -> str:
-    """Search the web for current information (raw implementation).
+async def _web_search(query: str, location: str = "US", language: str = "en", page: int = 0) -> str:
+    """Search the web for current information.
 
     Args:
-        query: Search query string.
+        query: Search query string. Supports operators like site:example.com.
         location: Country code for geo-targeting (e.g., US, GB, ID).
-        language: Language code (e.g., en, id).
+        language: Language code for results (e.g., en, id, ja).
+        page: Page number for pagination (0-indexed, max 10).
     """
-    client = _get_client()
-    response = await client.get(
+    data = await tinyfish_request(
+        "GET",
         TINYFISH_SEARCH_URL,
-        params={"query": query, "location": location, "language": language},
+        params={"query": query, "location": location, "language": language, "page": page},
     )
-    response.raise_for_status()
-    data = response.json()
 
     results = data.get("results", [])
     if not results:
         return "No results found for your query."
 
     formatted = []
-    for r in results[:5]:
-        formatted.append(f"[{r['title']}]({r['url']})\n  {r['snippet']}")
+    for r in results[:10]:
+        title = r.get("title", "Untitled")
+        url = r.get("url", "")
+        snippet = r.get("snippet", "")
+        site = r.get("site_name", "")
+        site_tag = f" [{site}]" if site else ""
+        formatted.append(f"[{title}]({url}){site_tag}\n  {snippet}")
 
     return "\n\n".join(formatted)
 
