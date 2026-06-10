@@ -1,8 +1,12 @@
 """Session endpoints."""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from agent_runtime.agents.runtime import run_agent
+from agent_runtime.agents.runtime import run_agent_streamed
 from agent_runtime.api.deps import get_prompt_repo, get_session_repo
 from agent_runtime.api.schemas import (
     ChatRequest,
@@ -134,4 +138,34 @@ async def chat(
         response=result.response,
         session_id=result.session_id,
         messages=[_msg_out(m) for m in messages],
+    )
+
+
+@router.post("/{encoded_id}/chat/stream")
+async def chat_stream(
+    encoded_id: str,
+    body: ChatRequest,
+    session_repo: SessionRepo = Depends(get_session_repo),
+):
+    try:
+        sid = decode(encoded_id)
+    except ValueError as e:
+        raise HTTPException(404, "Invalid session ID") from e
+
+    sess = await session_repo.get_session(sid)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+
+    async def event_generator():
+        async for event in run_agent_streamed(body.message, session_id=encoded_id):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
