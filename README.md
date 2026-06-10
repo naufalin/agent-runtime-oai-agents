@@ -63,6 +63,7 @@ agent-runtime-cli            # starts CLI
 | GET    | `/sessions`                | List sessions                       |
 | GET    | `/sessions/{id}`           | Get session detail + messages       |
 | POST   | `/sessions/{id}/chat`      | Send message, get agent response    |
+| POST   | `/sessions/{id}/chat/stream` | Send message, stream response (SSE) |
 
 ### Prompts
 
@@ -77,6 +78,43 @@ agent-runtime-cli            # starts CLI
 | Method | Endpoint | Description     |
 |--------|----------|-----------------|
 | GET    | `/`      | Health check    |
+
+### SSE Streaming
+
+The chat endpoint supports real-time streaming via Server-Sent Events (SSE).
+
+```bash
+# Stream a chat response
+curl -N -X POST http://localhost:8000/sessions/<id>/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello"}'
+```
+
+Each SSE frame is `data: {json}\n\n` with these event types:
+
+| Event Type    | Fields          | Description                          |
+|---------------|-----------------|--------------------------------------|
+| `text_delta`  | `delta`         | Incremental text chunk from the LLM  |
+| `tool_start`  | `tool`          | Tool call begins                     |
+| `tool_end`    | `tool`          | Tool call completes                  |
+| `done`        | `session_id`    | Stream finished successfully         |
+| `error`       | `message`       | Error occurred                       |
+
+Example output:
+
+```
+data: {"type": "text_delta", "delta": "Hello"}
+
+data: {"type": "text_delta", "delta": " world"}
+
+data: {"type": "tool_start", "tool": "web_search"}
+
+data: {"type": "tool_end", "tool": "web_search"}
+
+data: {"type": "done", "session_id": "abc123"}
+```
+
+The streaming endpoint accepts the same `ChatRequest` body as the non-streaming `/chat` endpoint. The final assistant message is persisted to the database after streaming completes.
 
 ## Tools
 
@@ -140,7 +178,7 @@ src/agent_runtime/
       sessions.py                        Session endpoints
       prompts.py                         Prompt endpoints
   agents/
-    runtime.py                           Agent definition, run_agent, switch_prompt
+    runtime.py                           Agent definition, run_agent, run_agent_streamed, switch_prompt
     hooks.py                             PersistenceHooks (tool call tracking)
   db/
     connection.py                        SQLAlchemy async engine
@@ -175,7 +213,7 @@ Session IDs are integers internally, exposed as opaque strings via [sqids](https
 ```bash
 uv run ruff check .          # lint
 uv run ruff format .         # format
-uv run pytest -v             # test (89 tests)
+uv run pytest -v             # test (91 tests)
 uv run pytest --cov          # coverage
 ```
 
