@@ -1,5 +1,6 @@
 """Tests for API endpoints."""
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -174,3 +175,45 @@ async def test_switch_prompt(mock_session_repo, mock_prompt_repo):
             resp = await client.post(f"/sessions/{encode(1)}/prompt", json={"name": "pirate"})
             assert resp.status_code == 200
             assert resp.json()["prompt"] == "pirate"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+
+    async def fake_streamed(message, session_id=None):
+        yield {"type": "text_delta", "delta": "Hello"}
+        yield {"type": "text_delta", "delta": " world"}
+        yield {"type": "done", "session_id": session_id or encode(1)}
+
+    from unittest.mock import patch
+
+    with patch("agent_runtime.api.routers.sessions.run_agent_streamed", side_effect=fake_streamed):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with client.stream(
+                "POST",
+                f"/sessions/{encode(1)}/chat/stream",
+                json={"message": "Hello"},
+            ) as resp:
+                assert resp.status_code == 200
+                assert "text/event-stream" in resp.headers["content-type"]
+                lines = []
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        lines.append(json.loads(line[6:]))
+                assert len(lines) == 3
+                assert lines[0] == {"type": "text_delta", "delta": "Hello"}
+                assert lines[1] == {"type": "text_delta", "delta": " world"}
+                assert lines[2]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_session_not_found(mock_session_repo, mock_prompt_repo):
+    mock_session_repo.get_session.return_value = None
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            f"/sessions/{encode(999)}/chat/stream",
+            json={"message": "Hello"},
+        )
+        assert resp.status_code == 404
