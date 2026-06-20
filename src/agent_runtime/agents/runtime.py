@@ -2,9 +2,15 @@
 
 from dataclasses import dataclass
 
-from agents import Agent, Runner
+from agents import Agent, ModelSettings, RunConfig, Runner
+from agents.models.interface import Model
 
 from agent_runtime.agents.hooks import PersistenceHooks, RunContext
+from agent_runtime.agents.model_provider import (
+    extract_thinking,
+    resolve_runtime_model,
+    serialize_usage,
+)
 from agent_runtime.config import Settings
 from agent_runtime.db.connection import Database
 from agent_runtime.db.prompt_repo import SystemPromptRepo
@@ -34,13 +40,18 @@ async def get_db() -> Database:
     return _db
 
 
-def create_agent(system_prompt: str) -> Agent:
+def create_agent(
+    system_prompt: str,
+    model: str | Model | None = None,
+    model_settings: ModelSettings | None = None,
+) -> Agent:
     """Create the configured runtime agent with the given system prompt."""
     settings = Settings()
     return Agent(
         name="MainAgent",
         instructions=system_prompt,
-        model=settings.openai_model,
+        model=model or settings.openai_model,
+        model_settings=model_settings or ModelSettings(),
         tools=[
             web_search,
             web_fetch,
@@ -59,9 +70,19 @@ class AgentResponse:
 
     response: str
     session_id: str  # encoded ID for external use
+    provider: str | None = None
+    model: str | None = None
+    usage: dict | None = None
+    thinking: dict | None = None
 
 
-async def run_agent(user_message: str, session_id: str | None = None) -> AgentResponse:
+async def run_agent(
+    user_message: str,
+    session_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> AgentResponse:
     """Run the agent with a user message, persist to DB, and return the response.
 
     Args:
@@ -115,24 +136,58 @@ async def run_agent(user_message: str, session_id: str | None = None) -> AgentRe
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
 
+    runtime_model = resolve_runtime_model(
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
+
     # Run the agent with the active system prompt, full history, and persistence hooks
-    agent = create_agent(system_prompt)
+    agent = create_agent(
+        system_prompt,
+        model=runtime_model.model,
+        model_settings=runtime_model.model_settings,
+    )
     run_context = RunContext(session_id=internal_id, repo=repo)
     result = await Runner.run(
         agent,
         input=input_items,
         context=run_context,
         hooks=_hooks,  # type: ignore[arg-type]
+        run_config=RunConfig(tracing_disabled=runtime_model.tracing_disabled),
     )
     response = result.final_output
+    usage = serialize_usage(result.context_wrapper.usage)
+    thinking = extract_thinking(result.raw_responses)
 
     # Save agent response
-    await repo.add_message(internal_id, "assistant", response)
+    await repo.add_message(
+        internal_id,
+        "assistant",
+        response,
+        provider=runtime_model.provider,
+        model=runtime_model.model_name,
+        usage_json=usage,
+        thinking_json=thinking,
+    )
 
-    return AgentResponse(response=response, session_id=encode(internal_id))
+    return AgentResponse(
+        response=response,
+        session_id=encode(internal_id),
+        provider=runtime_model.provider,
+        model=runtime_model.model_name,
+        usage=usage,
+        thinking=thinking,
+    )
 
 
-async def run_agent_streamed(user_message: str, session_id: str | None = None):
+async def run_agent_streamed(
+    user_message: str,
+    session_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+):
     """Stream agent events as async generator of dicts.
 
     Yields dicts with 'type' key: text_delta, tool_start, tool_end, done, error.
@@ -176,7 +231,16 @@ async def run_agent_streamed(user_message: str, session_id: str | None = None):
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
 
-    agent = create_agent(system_prompt)
+    runtime_model = resolve_runtime_model(
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
+    agent = create_agent(
+        system_prompt,
+        model=runtime_model.model,
+        model_settings=runtime_model.model_settings,
+    )
     run_context = RunContext(session_id=internal_id, repo=repo)
 
     result = Runner.run_streamed(
@@ -184,6 +248,7 @@ async def run_agent_streamed(user_message: str, session_id: str | None = None):
         input=input_items,
         context=run_context,
         hooks=_hooks,
+        run_config=RunConfig(tracing_disabled=runtime_model.tracing_disabled),
     )
 
     full_text = ""
@@ -210,11 +275,29 @@ async def run_agent_streamed(user_message: str, session_id: str | None = None):
                             yield {"type": "text_delta", "delta": remaining}
                         full_text = text
 
+        usage = serialize_usage(result.context_wrapper.usage)
+        thinking = extract_thinking(result.raw_responses)
+
         # Save final assistant response
         if full_text:
-            await repo.add_message(internal_id, "assistant", full_text)
+            await repo.add_message(
+                internal_id,
+                "assistant",
+                full_text,
+                provider=runtime_model.provider,
+                model=runtime_model.model_name,
+                usage_json=usage,
+                thinking_json=thinking,
+            )
 
-        yield {"type": "done", "session_id": encode(internal_id)}
+        yield {
+            "type": "done",
+            "session_id": encode(internal_id),
+            "provider": runtime_model.provider,
+            "model": runtime_model.model_name,
+            "usage": usage,
+            "thinking": thinking,
+        }
 
     except Exception as exc:
         yield {"type": "error", "message": str(exc)}

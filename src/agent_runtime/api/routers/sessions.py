@@ -5,8 +5,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from agent_runtime.agents.runtime import run_agent
-from agent_runtime.agents.runtime import run_agent_streamed
+from agent_runtime.agents.runtime import run_agent, run_agent_streamed
 from agent_runtime.api.deps import get_prompt_repo, get_session_repo
 from agent_runtime.api.schemas import (
     ChatRequest,
@@ -43,6 +42,10 @@ def _msg_out(msg) -> MessageOut:
         role=msg.role,
         content=msg.content,
         tool_name=msg.tool_name,
+        provider=msg.provider,
+        model=msg.model,
+        usage=msg.usage_json,
+        thinking=msg.thinking_json,
         created_at=msg.created_at,
     )
 
@@ -128,7 +131,16 @@ async def chat(
     if not sess:
         raise HTTPException(404, "Session not found")
 
-    result = await run_agent(body.message, session_id=encoded_id)
+    try:
+        result = await run_agent(
+            body.message,
+            session_id=encoded_id,
+            provider=body.provider,
+            model=body.model,
+            reasoning_effort=body.reasoning_effort,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
     # Fetch all messages to return full context
     internal_id = decode(result.session_id)
@@ -137,6 +149,10 @@ async def chat(
     return ChatResponse(
         response=result.response,
         session_id=result.session_id,
+        provider=result.provider,
+        model=result.model,
+        usage=result.usage,
+        thinking=result.thinking,
         messages=[_msg_out(m) for m in messages],
     )
 
@@ -157,8 +173,17 @@ async def chat_stream(
         raise HTTPException(404, "Session not found")
 
     async def event_generator():
-        async for event in run_agent_streamed(body.message, session_id=encoded_id):
-            yield f"data: {json.dumps(event)}\n\n"
+        try:
+            async for event in run_agent_streamed(
+                body.message,
+                session_id=encoded_id,
+                provider=body.provider,
+                model=body.model,
+                reasoning_effort=body.reasoning_effort,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except ValueError as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(),

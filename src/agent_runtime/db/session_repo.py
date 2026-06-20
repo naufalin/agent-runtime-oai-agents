@@ -32,6 +32,10 @@ class SessionRepo:
         content: str,
         system_prompt_id: int | None = None,
         tool_name: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        usage_json: dict | None = None,
+        thinking_json: dict | None = None,
     ) -> Message:
         async with self.db.session() as s:
             msg = Message(
@@ -40,6 +44,10 @@ class SessionRepo:
                 content=content,
                 system_prompt_id=system_prompt_id,
                 tool_name=tool_name,
+                provider=provider,
+                model=model,
+                usage_json=usage_json,
+                thinking_json=thinking_json,
             )
             s.add(msg)
             await s.flush()

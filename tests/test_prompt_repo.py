@@ -25,7 +25,7 @@ async def test_seed_default_creates_prompt(db):
     prompt = await repo.seed_default()
 
     assert prompt.name == "default"
-    assert "web_search" in prompt.content
+    assert "helpful assistant" in prompt.content
     assert prompt.id is not None
 
 

@@ -5,15 +5,7 @@ from sqlalchemy import select
 from agent_runtime.db.connection import Database
 from agent_runtime.db.models import SystemPrompt
 
-DEFAULT_PROMPT = """You are a helpful assistant with access to these tools:
-- web_search: Search the web for current information (TinyFish)
-- get_weather: Get current weather for any city (Open-Meteo)
-- convert_currency: Convert between currencies with live rates (Frankfurter/ECB)
-- get_country_info: Look up country details — capital, population, currency,
-  languages (REST Countries)
-
-Use tools when the user's question requires real-time data or lookup.
-Be concise and factual. When showing results, format them clearly."""
+DEFAULT_PROMPT = """You are a helpful assistant."""
 
 
 class SystemPromptRepo:

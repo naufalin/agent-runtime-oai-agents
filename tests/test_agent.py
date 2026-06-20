@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agents.usage import Usage
 
 from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent
 from agent_runtime.db.models import Message, Session, SystemPrompt
@@ -24,7 +25,8 @@ def test_create_agent_uses_prompt():
 
 
 @pytest.mark.asyncio
-async def test_run_agent_inserts_system_message_for_new_session():
+async def test_run_agent_inserts_system_message_for_new_session(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
     mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
@@ -47,6 +49,8 @@ async def test_run_agent_inserts_system_message_for_new_session():
 
     mock_result = AsyncMock()
     mock_result.final_output = "Hello!"
+    mock_result.context_wrapper.usage = Usage()
+    mock_result.raw_responses = []
 
     with (
         patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
@@ -61,14 +65,20 @@ async def test_run_agent_inserts_system_message_for_new_session():
         mock_prompt_repo.seed_default.assert_called_once()
         mock_repo.create_session.assert_called_once()
         assert mock_repo.add_message.call_count == 3
+        final_message_kwargs = mock_repo.add_message.call_args.kwargs
+        assert final_message_kwargs["provider"] == "openai"
+        assert final_message_kwargs["model"] == "gpt-5.4-mini"
+        assert final_message_kwargs["usage_json"]["total_tokens"] == 0
         # Verify hooks and context were passed
         call_kwargs = mock_run.call_args
         assert "hooks" in call_kwargs.kwargs
         assert "context" in call_kwargs.kwargs
+        assert call_kwargs.kwargs["run_config"].tracing_disabled is False
 
 
 @pytest.mark.asyncio
-async def test_run_agent_uses_latest_system_prompt():
+async def test_run_agent_uses_latest_system_prompt(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
     mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
@@ -84,6 +94,8 @@ async def test_run_agent_uses_latest_system_prompt():
 
     mock_result = AsyncMock()
     mock_result.final_output = "Arr!"
+    mock_result.context_wrapper.usage = Usage()
+    mock_result.raw_responses = []
 
     with (
         patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),

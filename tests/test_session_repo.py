@@ -57,6 +57,29 @@ async def test_add_message(db):
 
 
 @pytest.mark.asyncio
+async def test_add_assistant_message_with_model_metadata(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    usage = {"total_tokens": 12, "reasoning_tokens": 4}
+    thinking = {"reasoning": "provider returned reasoning"}
+
+    result = await repo.add_message(
+        sess.id,
+        "assistant",
+        "Hello!",
+        provider="openrouter",
+        model="z-ai/glm-5.2",
+        usage_json=usage,
+        thinking_json=thinking,
+    )
+
+    assert result.provider == "openrouter"
+    assert result.model == "z-ai/glm-5.2"
+    assert result.usage_json == usage
+    assert result.thinking_json == thinking
+
+
+@pytest.mark.asyncio
 async def test_get_messages(db):
     repo = SessionRepo(db)
     sess = await repo.create_session("Test")
