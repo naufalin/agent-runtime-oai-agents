@@ -152,6 +152,27 @@ async def test_docs_and_openapi_with_valid_token():
 
 
 @pytest.mark.asyncio
+async def test_docs_and_openapi_with_query_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        docs_resp = await client.get("/docs?token=test-token")
+        redoc_resp = await client.get("/redoc?token=test-token")
+        schema_resp = await client.get("/openapi.json?token=test-token")
+
+        assert docs_resp.status_code == 200
+        assert "/openapi.json?token=test-token" in docs_resp.text
+        assert redoc_resp.status_code == 200
+        assert schema_resp.status_code == 200
+        assert schema_resp.json()["info"]["title"] == "Agent Runtime"
+
+
+@pytest.mark.asyncio
+async def test_docs_with_wrong_query_token_returns_401():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/docs?token=wrong")
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_list_models_requires_auth():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/models")

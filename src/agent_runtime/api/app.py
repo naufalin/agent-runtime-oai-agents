@@ -13,7 +13,7 @@ from fastapi.openapi.utils import get_openapi  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 
 from agent_runtime.agents.runtime import get_db  # noqa: E402
-from agent_runtime.api.auth import require_bearer_token  # noqa: E402
+from agent_runtime.api.auth import require_bearer_token, require_docs_token  # noqa: E402
 from agent_runtime.api.routers import models, prompts, sessions  # noqa: E402
 from agent_runtime.db.prompt_repo import SystemPromptRepo  # noqa: E402
 
@@ -58,7 +58,7 @@ async def health():
 
 
 @app.get("/openapi.json", include_in_schema=False)
-async def openapi_schema(_: str = Depends(require_bearer_token)):
+async def openapi_schema(_: str = Depends(require_docs_token)):
     return get_openapi(
         title=app.title,
         version=app.version,
@@ -68,8 +68,9 @@ async def openapi_schema(_: str = Depends(require_bearer_token)):
 
 
 @app.get("/docs", include_in_schema=False)
-async def swagger_ui(token: str = Depends(require_bearer_token)):
+async def swagger_ui(token: str = Depends(require_docs_token)):
     token_json = json.dumps(token)
+    schema_url_json = json.dumps(f"/openapi.json?token={token}")
     title_json = json.dumps(f"{app.title} - Swagger UI")
     return HTMLResponse(
         f"""
@@ -84,7 +85,7 @@ async def swagger_ui(token: str = Depends(require_bearer_token)):
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
     SwaggerUIBundle({{
-      url: "/openapi.json",
+      url: {schema_url_json},
       dom_id: "#swagger-ui",
       layout: "BaseLayout",
       deepLinking: true,
@@ -104,7 +105,7 @@ async def swagger_ui(token: str = Depends(require_bearer_token)):
 
 
 @app.get("/redoc", include_in_schema=False)
-async def redoc_ui(_: str = Depends(require_bearer_token)):
+async def redoc_ui(_: str = Depends(require_docs_token)):
     schema_json = json.dumps(
         get_openapi(
             title=app.title,

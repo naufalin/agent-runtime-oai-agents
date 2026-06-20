@@ -19,7 +19,7 @@ uv run alembic upgrade head
 
 # 4. Start the server
 uv run python main.py
-# → http://localhost:8000/docs (Swagger UI)
+# → http://localhost:8000/docs?token=<AGENT_RUNTIME_BEARER_TOKEN> (Swagger UI)
 ```
 
 ## Usage
@@ -66,6 +66,10 @@ curl http://localhost:8000/sessions \
 
 If `AGENT_RUNTIME_BEARER_TOKEN` is blank or missing, protected endpoints return
 `503` until the service is configured.
+
+Swagger and ReDoc also accept a browser-friendly query token:
+`/docs?token=<AGENT_RUNTIME_BEARER_TOKEN>` and
+`/redoc?token=<AGENT_RUNTIME_BEARER_TOKEN>`.
 
 ### Sessions
 
