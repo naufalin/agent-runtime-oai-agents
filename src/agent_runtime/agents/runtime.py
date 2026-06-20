@@ -98,6 +98,13 @@ async def run_agent(
     prompt_repo = SystemPromptRepo(db)
     model_repo = RuntimeModelRepo(db)
 
+    runtime_model = await resolve_runtime_model(
+        model_repo=model_repo,
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
+
     # Resolve session: decode existing or create new
     internal_id: int | None = None
     if session_id is not None:
@@ -137,13 +144,6 @@ async def run_agent(
         # Skip tool/system messages — SDK manages tool state, system prompt is on the agent
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
-
-    runtime_model = await resolve_runtime_model(
-        model_repo=model_repo,
-        provider=provider,
-        model=model,
-        reasoning_effort=reasoning_effort,
-    )
 
     # Run the agent with the active system prompt, full history, and persistence hooks
     agent = create_agent(
@@ -203,6 +203,13 @@ async def run_agent_streamed(
     prompt_repo = SystemPromptRepo(db)
     model_repo = RuntimeModelRepo(db)
 
+    runtime_model = await resolve_runtime_model(
+        model_repo=model_repo,
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
+
     # Resolve session (same logic as run_agent)
     internal_id: int | None = None
     if session_id is not None:
@@ -235,12 +242,6 @@ async def run_agent_streamed(
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
 
-    runtime_model = await resolve_runtime_model(
-        model_repo=model_repo,
-        provider=provider,
-        model=model,
-        reasoning_effort=reasoning_effort,
-    )
     agent = create_agent(
         system_prompt,
         model=runtime_model.model,

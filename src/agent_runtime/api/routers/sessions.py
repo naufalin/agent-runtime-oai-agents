@@ -5,8 +5,9 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from agent_runtime.agents.model_provider import resolve_runtime_model
 from agent_runtime.agents.runtime import run_agent, run_agent_streamed
-from agent_runtime.api.deps import get_prompt_repo, get_session_repo
+from agent_runtime.api.deps import get_prompt_repo, get_runtime_model_repo, get_session_repo
 from agent_runtime.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -17,6 +18,7 @@ from agent_runtime.api.schemas import (
     SessionOut,
 )
 from agent_runtime.db.prompt_repo import SystemPromptRepo
+from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 from agent_runtime.db.session_repo import SessionRepo
 from agent_runtime.ids import decode, encode
 
@@ -162,6 +164,7 @@ async def chat_stream(
     encoded_id: str,
     body: ChatRequest,
     session_repo: SessionRepo = Depends(get_session_repo),
+    model_repo: RuntimeModelRepo = Depends(get_runtime_model_repo),
 ):
     try:
         sid = decode(encoded_id)
@@ -171,6 +174,16 @@ async def chat_stream(
     sess = await session_repo.get_session(sid)
     if not sess:
         raise HTTPException(404, "Session not found")
+
+    try:
+        await resolve_runtime_model(
+            model_repo=model_repo,
+            provider=body.provider,
+            model=body.model,
+            reasoning_effort=body.reasoning_effort,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
     async def event_generator():
         try:

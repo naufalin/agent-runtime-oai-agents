@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from agents.usage import Usage
 
-from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent
+from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent, run_agent_streamed
 from agent_runtime.db.models import Message, RuntimeModel, Session, SystemPrompt
+from agent_runtime.ids import encode
 
 
 def test_create_agent_has_all_tools():
@@ -127,3 +128,76 @@ async def test_run_agent_uses_latest_system_prompt(monkeypatch):
 
         assert result.response == "Arr!"
         mock_prompt_repo.seed_default.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_validates_model_before_persisting_user_message(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openrouter",
+        model_id="deepseek/deepseek-v4-flash",
+        name="DeepSeek: DeepSeek V4 Flash",
+        enabled=True,
+    )
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch("agent_runtime.agents.runtime.Runner.run") as mock_run,
+        pytest.raises(ValueError, match="OPENROUTER_API_KEY is required"),
+    ):
+        await run_agent(
+            "Hello",
+            session_id=encode(1),
+            provider="openrouter",
+            model="deepseek/deepseek-v4-flash",
+        )
+
+    mock_repo.add_message.assert_not_called()
+    mock_repo.create_session.assert_not_called()
+    mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_validates_model_before_persisting_user_message(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openrouter",
+        model_id="deepseek/deepseek-v4-flash",
+        name="DeepSeek: DeepSeek V4 Flash",
+        enabled=True,
+    )
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch("agent_runtime.agents.runtime.Runner.run_streamed") as mock_run_streamed,
+        pytest.raises(ValueError, match="OPENROUTER_API_KEY is required"),
+    ):
+        _ = [
+            event
+            async for event in run_agent_streamed(
+                "Hello",
+                session_id=encode(1),
+                provider="openrouter",
+                model="deepseek/deepseek-v4-flash",
+            )
+        ]
+
+    mock_repo.add_message.assert_not_called()
+    mock_repo.create_session.assert_not_called()
+    mock_run_streamed.assert_not_called()

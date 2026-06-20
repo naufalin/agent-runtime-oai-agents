@@ -1,7 +1,7 @@
 """Tests for API endpoints."""
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -536,6 +536,34 @@ async def test_chat_session_not_found(mock_session_repo, mock_prompt_repo):
 
 
 @pytest.mark.asyncio
+async def test_chat_validation_error_returns_400_without_persisting(
+    mock_session_repo,
+    mock_prompt_repo,
+):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+
+    with patch(
+        "agent_runtime.api.routers.sessions.run_agent",
+        side_effect=ValueError("OPENROUTER_API_KEY is required"),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/chat",
+                json={
+                    "message": "Hello",
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                },
+            )
+
+    assert resp.status_code == 400
+    assert "OPENROUTER_API_KEY is required" in resp.json()["detail"]
+    mock_session_repo.add_message.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_switch_prompt(mock_session_repo, mock_prompt_repo):
     _setup_deps(mock_session_repo, mock_prompt_repo)
     from unittest.mock import patch
@@ -550,8 +578,21 @@ async def test_switch_prompt(mock_session_repo, mock_prompt_repo):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream(mock_session_repo, mock_prompt_repo):
-    _setup_deps(mock_session_repo, mock_prompt_repo)
+async def test_chat_stream(
+    monkeypatch,
+    mock_session_repo,
+    mock_prompt_repo,
+    mock_runtime_model_repo,
+):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    mock_runtime_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=3,
+        provider="openrouter",
+        model_id="minimax/minimax-m3",
+        name="MiniMax: MiniMax M3",
+        enabled=True,
+    )
+    _setup_deps(mock_session_repo, mock_prompt_repo, mock_runtime_model_repo)
 
     async def fake_streamed(
         message,
@@ -570,8 +611,6 @@ async def test_chat_stream(mock_session_repo, mock_prompt_repo):
             "usage": {"total_tokens": 11, "reasoning_tokens": 3},
             "thinking": {"reasoning": "stream reasoning"},
         }
-
-    from unittest.mock import patch
 
     with patch("agent_runtime.api.routers.sessions.run_agent_streamed", side_effect=fake_streamed):
         async with AsyncClient(
@@ -600,6 +639,43 @@ async def test_chat_stream(mock_session_repo, mock_prompt_repo):
                 assert lines[2]["model"] == "minimax/minimax-m3"
                 assert lines[2]["usage"]["reasoning_tokens"] == 3
                 assert lines[2]["thinking"]["reasoning"] == "stream reasoning"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_validation_error_returns_400_before_sse(
+    monkeypatch,
+    mock_session_repo,
+    mock_prompt_repo,
+    mock_runtime_model_repo,
+):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    mock_runtime_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=2,
+        provider="openrouter",
+        model_id="deepseek/deepseek-v4-flash",
+        name="DeepSeek: DeepSeek V4 Flash",
+        enabled=True,
+    )
+    _setup_deps(mock_session_repo, mock_prompt_repo, mock_runtime_model_repo)
+
+    with patch("agent_runtime.api.routers.sessions.run_agent_streamed") as run_streamed:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/chat/stream",
+                json={
+                    "message": "Hello",
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                },
+            )
+
+    assert resp.status_code == 400
+    assert "OPENROUTER_API_KEY is required" in resp.json()["detail"]
+    assert "text/event-stream" not in resp.headers.get("content-type", "")
+    mock_session_repo.add_message.assert_not_called()
+    run_streamed.assert_not_called()
 
 
 @pytest.mark.asyncio
