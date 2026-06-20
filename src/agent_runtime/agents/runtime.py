@@ -14,6 +14,7 @@ from agent_runtime.agents.model_provider import (
 from agent_runtime.config import Settings
 from agent_runtime.db.connection import Database
 from agent_runtime.db.prompt_repo import SystemPromptRepo
+from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 from agent_runtime.db.session_repo import SessionRepo
 from agent_runtime.ids import decode, encode
 from agent_runtime.tools.country import get_country_info
@@ -95,6 +96,7 @@ async def run_agent(
     db = await get_db()
     repo = SessionRepo(db)
     prompt_repo = SystemPromptRepo(db)
+    model_repo = RuntimeModelRepo(db)
 
     # Resolve session: decode existing or create new
     internal_id: int | None = None
@@ -136,7 +138,8 @@ async def run_agent(
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
 
-    runtime_model = resolve_runtime_model(
+    runtime_model = await resolve_runtime_model(
+        model_repo=model_repo,
         provider=provider,
         model=model,
         reasoning_effort=reasoning_effort,
@@ -198,6 +201,7 @@ async def run_agent_streamed(
     db = await get_db()
     repo = SessionRepo(db)
     prompt_repo = SystemPromptRepo(db)
+    model_repo = RuntimeModelRepo(db)
 
     # Resolve session (same logic as run_agent)
     internal_id: int | None = None
@@ -231,7 +235,8 @@ async def run_agent_streamed(
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
 
-    runtime_model = resolve_runtime_model(
+    runtime_model = await resolve_runtime_model(
+        model_repo=model_repo,
         provider=provider,
         model=model,
         reasoning_effort=reasoning_effort,

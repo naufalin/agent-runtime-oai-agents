@@ -16,16 +16,7 @@ from openai.types.responses import ResponseReasoningItem
 from openai.types.responses.response_reasoning_item import Content, Summary
 
 from agent_runtime.config import Settings
-
-SUPPORTED_OPENROUTER_MODELS: dict[str, str] = {
-    "z-ai/glm-5.2": "Z.ai: GLM 5.2",
-    "qwen/qwen3.7-max": "Qwen: Qwen3.7 Max",
-    "qwen/qwen3.7-plus": "Qwen: Qwen3.7 Plus",
-    "moonshotai/kimi-k2.7-code": "MoonshotAI: Kimi K2.7 Code",
-    "minimax/minimax-m3": "MiniMax: MiniMax M3",
-    "deepseek/deepseek-v4-pro": "DeepSeek: DeepSeek V4 Pro",
-    "deepseek/deepseek-v4-flash": "DeepSeek: DeepSeek V4 Flash",
-}
+from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 
 ProviderName = Literal["openai", "openrouter"]
 
@@ -99,16 +90,17 @@ class OpenRouterChatCompletionsModel(OpenAIChatCompletionsModel):
         return response
 
 
-def resolve_runtime_model(
+async def resolve_runtime_model(
     *,
+    model_repo: RuntimeModelRepo,
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
 ) -> RuntimeModelConfig:
     """Resolve provider/model for a single agent run."""
     settings = Settings()
-    resolved_provider = _resolve_provider(settings, provider, model)
-    resolved_model = _resolve_model(settings, resolved_provider, model)
+    resolved_provider = await _resolve_provider(settings, model_repo, provider, model)
+    resolved_model = await _resolve_model(settings, model_repo, resolved_provider, model)
 
     if resolved_provider == "openai":
         return RuntimeModelConfig(
@@ -138,21 +130,37 @@ def resolve_runtime_model(
     )
 
 
-def supported_models_payload() -> dict[str, Any]:
-    """Return the local supported model registry for API callers."""
+async def supported_models_payload(model_repo: RuntimeModelRepo) -> dict[str, Any]:
+    """Return the database-backed model registry for API callers."""
     settings = Settings()
+    rows = await model_repo.list_all()
+    models_by_provider: dict[str, list[dict[str, Any]]] = {
+        "openai": [],
+        "openrouter": [],
+    }
+    for row in rows:
+        models_by_provider.setdefault(row.provider, []).append(
+            {
+                "id": row.id,
+                "provider": row.provider,
+                "model_id": row.model_id,
+                "name": row.name,
+                "enabled": row.enabled,
+                "supports_reasoning": row.supports_reasoning,
+                "sort_order": row.sort_order,
+                "config": row.config_json,
+            }
+        )
+
     return {
         "default_provider": settings.agent_runtime_model_provider,
         "openai": {
             "default_model": settings.openai_model,
-            "models": [settings.openai_model],
+            "models": models_by_provider.get("openai", []),
         },
         "openrouter": {
             "default_model": settings.openrouter_model,
-            "models": [
-                {"id": model_id, "name": name}
-                for model_id, name in SUPPORTED_OPENROUTER_MODELS.items()
-            ],
+            "models": models_by_provider.get("openrouter", []),
         },
     }
 
@@ -227,10 +235,15 @@ def extract_thinking(raw_responses: Iterable[ModelResponse]) -> dict[str, Any] |
     }
 
 
-def _resolve_provider(settings: Settings, provider: str | None, model: str | None) -> ProviderName:
+async def _resolve_provider(
+    settings: Settings,
+    model_repo: RuntimeModelRepo,
+    provider: str | None,
+    model: str | None,
+) -> ProviderName:
     if provider:
         normalized = provider.lower()
-    elif model in SUPPORTED_OPENROUTER_MODELS:
+    elif model and await model_repo.get_by_provider_model("openrouter", model, enabled_only=True):
         normalized = "openrouter"
     else:
         normalized = settings.agent_runtime_model_provider.lower()
@@ -240,13 +253,18 @@ def _resolve_provider(settings: Settings, provider: str | None, model: str | Non
     return cast(ProviderName, normalized)
 
 
-def _resolve_model(settings: Settings, provider: ProviderName, model: str | None) -> str:
+async def _resolve_model(
+    settings: Settings,
+    model_repo: RuntimeModelRepo,
+    provider: ProviderName,
+    model: str | None,
+) -> str:
     resolved = model or (
         settings.openrouter_model if provider == "openrouter" else settings.openai_model
     )
-    if provider == "openrouter" and resolved not in SUPPORTED_OPENROUTER_MODELS:
-        supported = ", ".join(SUPPORTED_OPENROUTER_MODELS)
-        raise ValueError(f"Unsupported OpenRouter model: {resolved}. Supported models: {supported}")
+    row = await model_repo.get_by_provider_model(provider, resolved, enabled_only=True)
+    if row is None:
+        raise ValueError(f"Unsupported or disabled {provider} model: {resolved}")
     return resolved
 
 

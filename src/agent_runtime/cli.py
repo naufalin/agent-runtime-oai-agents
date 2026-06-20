@@ -5,6 +5,7 @@ import sys
 
 from agent_runtime.agents.runtime import get_db, run_agent, switch_prompt
 from agent_runtime.db.prompt_repo import SystemPromptRepo
+from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 from agent_runtime.db.session_repo import SessionRepo
 from agent_runtime.ids import decode, encode
 
@@ -12,6 +13,8 @@ from agent_runtime.ids import decode, encode
 async def chat_loop(session_id: str | None = None) -> None:
     db = await get_db()
     repo = SessionRepo(db)
+    model_repo = RuntimeModelRepo(db)
+    await model_repo.seed_defaults()
     internal_id: int | None = None
 
     if session_id:

@@ -65,6 +65,37 @@ class ChatResponse(BaseModel):
     messages: list[MessageOut]
 
 
+class RuntimeModelOut(BaseModel):
+    id: int
+    provider: str
+    model_id: str
+    name: str
+    enabled: bool
+    supports_reasoning: bool
+    sort_order: int
+    config: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class RuntimeModelCreate(BaseModel):
+    provider: str = Field(..., min_length=1, max_length=50)
+    model_id: str = Field(..., min_length=1, max_length=200)
+    name: str = Field(..., min_length=1, max_length=200)
+    enabled: bool = True
+    supports_reasoning: bool = False
+    sort_order: int = 0
+    config: dict[str, Any] | None = None
+
+
+class RuntimeModelUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    enabled: bool | None = None
+    supports_reasoning: bool | None = None
+    sort_order: int | None = None
+    config: dict[str, Any] | None = None
+
+
 class ModelsOut(BaseModel):
     default_provider: str
     openai: dict[str, Any]

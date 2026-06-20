@@ -80,7 +80,10 @@ Swagger and ReDoc also accept a browser-friendly query token:
 | GET    | `/sessions/{id}`           | Get session detail + messages       |
 | POST   | `/sessions/{id}/chat`      | Send message, get agent response    |
 | POST   | `/sessions/{id}/chat/stream` | Send message, stream response (SSE) |
-| GET    | `/models`                  | List supported model IDs and defaults |
+| GET    | `/models`                  | List model registry rows and defaults |
+| POST   | `/models`                  | Add a runtime model                  |
+| PATCH  | `/models/{id}`             | Edit a runtime model                 |
+| DELETE | `/models/{id}`             | Delete a runtime model               |
 
 Chat requests accept optional model controls:
 
@@ -93,9 +96,11 @@ Chat requests accept optional model controls:
 }
 ```
 
-If `provider` is omitted and `model` is one of the supported OpenRouter IDs, the
-request is routed to OpenRouter for that single run. Responses and session
-history include nullable `provider`, `model`, `usage`, and `thinking` metadata.
+If `provider` is omitted and `model` matches an enabled OpenRouter row in the
+model registry, the request is routed to OpenRouter for that single run.
+Responses and session history include nullable `provider`, `model`, `usage`, and
+`thinking` metadata. `/models` is database-backed, so OpenRouter model IDs can be
+added, edited, disabled, or deleted without a code change.
 
 ### Prompts
 

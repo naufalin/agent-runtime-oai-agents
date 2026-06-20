@@ -16,6 +16,7 @@ from agent_runtime.agents.runtime import get_db  # noqa: E402
 from agent_runtime.api.auth import require_bearer_token, require_docs_token  # noqa: E402
 from agent_runtime.api.routers import models, prompts, sessions  # noqa: E402
 from agent_runtime.db.prompt_repo import SystemPromptRepo  # noqa: E402
+from agent_runtime.db.runtime_model_repo import RuntimeModelRepo  # noqa: E402
 
 
 @asynccontextmanager
@@ -23,7 +24,9 @@ async def lifespan(app: FastAPI):
     # Startup: connect DB, seed default prompt
     db = await get_db()
     prompt_repo = SystemPromptRepo(db)
+    model_repo = RuntimeModelRepo(db)
     await prompt_repo.seed_default()
+    await model_repo.seed_defaults()
     yield
     # Shutdown: disconnect DB
     await db.disconnect()

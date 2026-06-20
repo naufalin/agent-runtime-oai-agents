@@ -7,8 +7,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_runtime.api.app import app
-from agent_runtime.api.deps import get_prompt_repo, get_session_repo
-from agent_runtime.db.models import Message, Session, SystemPrompt
+from agent_runtime.api.deps import get_prompt_repo, get_runtime_model_repo, get_session_repo
+from agent_runtime.db.models import Message, RuntimeModel, Session, SystemPrompt
 from agent_runtime.ids import encode
 
 AUTH_HEADERS = {"Authorization": "Bearer test-token"}
@@ -56,6 +56,54 @@ def mock_prompt_repo():
     return repo
 
 
+@pytest.fixture
+def mock_runtime_model_repo():
+    repo = AsyncMock()
+    repo.list_all.return_value = [
+        RuntimeModel(
+            id=1,
+            provider="openrouter",
+            model_id="z-ai/glm-5.2",
+            name="Z.ai: GLM 5.2",
+            enabled=True,
+            supports_reasoning=True,
+            sort_order=10,
+        ),
+        RuntimeModel(
+            id=2,
+            provider="openrouter",
+            model_id="deepseek/deepseek-v4-flash",
+            name="DeepSeek: DeepSeek V4 Flash",
+            enabled=True,
+            supports_reasoning=True,
+            sort_order=70,
+        ),
+    ]
+    repo.get_by_provider_model.return_value = None
+    repo.create.return_value = RuntimeModel(
+        id=3,
+        provider="openrouter",
+        model_id="vendor/new",
+        name="Vendor New",
+        enabled=True,
+        supports_reasoning=False,
+        sort_order=80,
+        config_json={"tier": "test"},
+    )
+    repo.update.return_value = RuntimeModel(
+        id=3,
+        provider="openrouter",
+        model_id="vendor/new",
+        name="Vendor Updated",
+        enabled=False,
+        supports_reasoning=True,
+        sort_order=90,
+        config_json={"tier": "prod"},
+    )
+    repo.delete.return_value = True
+    return repo
+
+
 @pytest.fixture(autouse=True)
 def _set_auth_token(monkeypatch):
     """Configure API auth for endpoint tests."""
@@ -69,11 +117,13 @@ def _reset_overrides():
     app.dependency_overrides.clear()
 
 
-def _setup_deps(mock_session_repo=None, mock_prompt_repo=None):
+def _setup_deps(mock_session_repo=None, mock_prompt_repo=None, mock_runtime_model_repo=None):
     if mock_session_repo:
         app.dependency_overrides[get_session_repo] = lambda: mock_session_repo
     if mock_prompt_repo:
         app.dependency_overrides[get_prompt_repo] = lambda: mock_prompt_repo
+    if mock_runtime_model_repo:
+        app.dependency_overrides[get_runtime_model_repo] = lambda: mock_runtime_model_repo
 
 
 @pytest.mark.asyncio
@@ -180,15 +230,134 @@ async def test_list_models_requires_auth():
 
 
 @pytest.mark.asyncio
-async def test_list_models_with_valid_token():
+async def test_list_models_with_valid_token(mock_runtime_model_repo):
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
     ) as client:
         resp = await client.get("/models")
         assert resp.status_code == 200
-        model_ids = {item["id"] for item in resp.json()["openrouter"]["models"]}
+        model_ids = {item["model_id"] for item in resp.json()["openrouter"]["models"]}
         assert "z-ai/glm-5.2" in model_ids
         assert "deepseek/deepseek-v4-flash" in model_ids
+        assert resp.json()["openrouter"]["models"][0]["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_model(mock_runtime_model_repo):
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.post(
+            "/models",
+            json={
+                "provider": "OpenRouter",
+                "model_id": "vendor/new",
+                "name": "Vendor New",
+                "supports_reasoning": False,
+                "sort_order": 80,
+                "config": {"tier": "test"},
+            },
+        )
+
+    assert resp.status_code == 201
+    assert resp.json()["model_id"] == "vendor/new"
+    mock_runtime_model_repo.create.assert_awaited_once_with(
+        provider="openrouter",
+        model_id="vendor/new",
+        name="Vendor New",
+        enabled=True,
+        supports_reasoning=False,
+        sort_order=80,
+        config_json={"tier": "test"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_model_duplicate(mock_runtime_model_repo):
+    mock_runtime_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openrouter",
+        model_id="vendor/new",
+        name="Vendor New",
+    )
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.post(
+            "/models",
+            json={"provider": "openrouter", "model_id": "vendor/new", "name": "Vendor New"},
+        )
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_model(mock_runtime_model_repo):
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.patch(
+            "/models/3",
+            json={
+                "name": "Vendor Updated",
+                "enabled": False,
+                "supports_reasoning": True,
+                "sort_order": 90,
+                "config": {"tier": "prod"},
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+    mock_runtime_model_repo.update.assert_awaited_once_with(
+        3,
+        name="Vendor Updated",
+        enabled=False,
+        supports_reasoning=True,
+        sort_order=90,
+        config_json={"tier": "prod"},
+        replace_config=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_model_not_found(mock_runtime_model_repo):
+    mock_runtime_model_repo.update.return_value = None
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.patch("/models/999", json={"enabled": False})
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_model(mock_runtime_model_repo):
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.delete("/models/3")
+
+    assert resp.status_code == 204
+    mock_runtime_model_repo.delete.assert_awaited_once_with(3)
+
+
+@pytest.mark.asyncio
+async def test_delete_model_not_found(mock_runtime_model_repo):
+    mock_runtime_model_repo.delete.return_value = False
+    _setup_deps(mock_runtime_model_repo=mock_runtime_model_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.delete("/models/999")
+
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
