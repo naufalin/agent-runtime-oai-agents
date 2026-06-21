@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from agents import Agent, ModelSettings, RunConfig, Runner
 from agents.models.interface import Model
@@ -139,12 +140,24 @@ async def run_agent(
 
     # Build conversation history for the agent
     history = await repo.get_messages(internal_id)
-    input_items: list[dict[str, str]] = []
+    input_items: list[Any] = []
     for msg in history:
-        # Include user messages and assistant replies
-        # Skip tool/system messages — SDK manages tool state, system prompt is on the agent
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
+        elif msg.role == "tool" and msg.tool_call_id:
+            # Reconstruct function_call + function_call_output for the Responses API
+            if msg.tool_input:
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": msg.tool_call_id,
+                    "name": msg.tool_name or "unknown",
+                    "arguments": json.dumps(msg.tool_input),
+                })
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": msg.tool_call_id,
+                "output": msg.content,
+            })
 
     # Run the agent with the active system prompt, full history, and persistence hooks
     agent = create_agent(
@@ -239,10 +252,23 @@ async def run_agent_streamed(
     await repo.add_message(internal_id, "user", user_message)
 
     history = await repo.get_messages(internal_id)
-    input_items = []
+    input_items: list[Any] = []
     for msg in history:
         if msg.role in ("user", "assistant"):
             input_items.append({"role": msg.role, "content": msg.content})
+        elif msg.role == "tool" and msg.tool_call_id:
+            if msg.tool_input:
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": msg.tool_call_id,
+                    "name": msg.tool_name or "unknown",
+                    "arguments": json.dumps(msg.tool_input),
+                })
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": msg.tool_call_id,
+                "output": msg.content,
+            })
 
     agent = create_agent(
         system_prompt,
