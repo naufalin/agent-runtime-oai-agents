@@ -1,7 +1,9 @@
 """Main agent definition with all tools and persistence."""
 
 import json
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from agents import Agent, ModelSettings, RunConfig, Runner
@@ -287,6 +289,11 @@ async def run_agent_streamed(
 
     full_text = ""
     _pending_tool_args: dict[str, dict] = {}  # call_id -> parsed args
+    _stream_started = time.monotonic()
+    _first_token_at: float | None = None
+    _last_token_at: float | None = None
+    _output_delta_count = 0
+    _started_at_iso = datetime.now(timezone.utc).isoformat()
     try:
         async for event in result.stream_events():
             if isinstance(event, RawResponsesStreamEvent):
@@ -298,6 +305,10 @@ async def run_agent_streamed(
                     and isinstance(delta, str)
                     and delta
                 ):
+                    if _first_token_at is None:
+                        _first_token_at = time.monotonic()
+                    _last_token_at = time.monotonic()
+                    _output_delta_count += 1
                     full_text += delta
                     yield {"type": "text_delta", "delta": delta}
                 elif (
@@ -373,7 +384,23 @@ async def run_agent_streamed(
                             yield {"type": "text_delta", "delta": remaining}
                         full_text = text
 
-        usage = serialize_usage(result.context_wrapper.usage)
+        # Compute perf metrics
+        _now = time.monotonic()
+        _perf = None
+        if _first_token_at is not None:
+            _ttft_ms = round((_first_token_at - _stream_started) * 1000)
+            _duration_s = (_last_token_at or _now) - _first_token_at
+            _usage_raw = serialize_usage(result.context_wrapper.usage)
+            _real_output = _usage_raw["output_tokens"] if _usage_raw else _output_delta_count
+            _tps = round(_real_output / _duration_s, 1) if _duration_s > 0 else 0.0
+            _perf = {
+                "ttft_ms": _ttft_ms,
+                "tps": _tps,
+                "generation_duration_ms": round(_duration_s * 1000),
+                "started_at": _started_at_iso,
+            }
+
+        usage = serialize_usage(result.context_wrapper.usage, perf=_perf)
         thinking = extract_thinking(result.raw_responses)
 
         # Save final assistant response
@@ -395,6 +422,7 @@ async def run_agent_streamed(
             "model": runtime_model.model_name,
             "usage": usage,
             "thinking": thinking,
+            "output_delta_count": _output_delta_count,
         }
 
     except Exception as exc:
