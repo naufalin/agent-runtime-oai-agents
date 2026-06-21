@@ -30,6 +30,9 @@ class MessageOut(BaseModel):
     role: str
     content: str
     tool_name: str | None = None
+    tool_call_id: str | None = None
+    tool_input: dict[str, Any] | None = None
+    output_preview: str | None = None
     provider: str | None = None
     model: str | None = None
     usage: dict[str, Any] | None = None
