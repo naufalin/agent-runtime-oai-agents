@@ -165,14 +165,17 @@ async def supported_models_payload(model_repo: RuntimeModelRepo) -> dict[str, An
     }
 
 
-def serialize_usage(usage: Usage | None) -> dict[str, Any] | None:
+def serialize_usage(
+    usage: Usage | None,
+    perf: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Serialize SDK usage into the API's stable token summary."""
     if usage is None:
         return None
 
     cached_tokens = _detail_value(usage.input_tokens_details, "cached_tokens")
     reasoning_tokens = _detail_value(usage.output_tokens_details, "reasoning_tokens")
-    return {
+    result: dict[str, Any] = {
         "requests": usage.requests,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
@@ -192,6 +195,9 @@ def serialize_usage(usage: Usage | None) -> dict[str, Any] | None:
             for entry in usage.request_usage_entries
         ],
     }
+    if perf:
+        result["perf"] = perf
+    return result
 
 
 def extract_thinking(raw_responses: Iterable[ModelResponse]) -> dict[str, Any] | None:

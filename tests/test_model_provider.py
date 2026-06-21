@@ -150,6 +150,39 @@ def test_serialize_usage_includes_reasoning_tokens():
     }
 
 
+def test_serialize_usage_includes_perf_when_provided():
+    usage = Usage(
+        requests=1, input_tokens=100, output_tokens=50, total_tokens=150,
+    )
+    perf = {
+        "ttft_ms": 320,
+        "tps": 42.5,
+        "generation_duration_ms": 1176,
+        "started_at": "2026-06-21T12:00:00+00:00",
+    }
+    result = serialize_usage(usage, perf=perf)
+    assert result is not None
+    assert result["perf"]["ttft_ms"] == 320
+    assert result["perf"]["tps"] == 42.5
+    assert result["perf"]["generation_duration_ms"] == 1176
+    # Other fields still present
+    assert result["output_tokens"] == 50
+
+
+def test_serialize_usage_no_perf_by_default():
+    usage = Usage(requests=1, input_tokens=10, output_tokens=5, total_tokens=15)
+    result = serialize_usage(usage)
+    assert result is not None
+    assert "perf" not in result
+
+
+def test_serialize_usage_perf_none_does_not_add_key():
+    usage = Usage(requests=1, input_tokens=10, output_tokens=5, total_tokens=15)
+    result = serialize_usage(usage, perf=None)
+    assert result is not None
+    assert "perf" not in result
+
+
 def test_extract_thinking_from_reasoning_item():
     reasoning_item = ResponseReasoningItem(
         id="rs_123",
