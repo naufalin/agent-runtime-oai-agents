@@ -193,7 +193,8 @@ async def run_agent_streamed(
 ):
     """Stream agent events as async generator of dicts.
 
-    Yields dicts with 'type' key: text_delta, tool_start, tool_end, done, error.
+    Yields dicts with 'type' key: text_delta, thinking_delta, tool_start, tool_end,
+    done, error.
     """
     from agents.items import ItemHelpers
     from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
@@ -262,9 +263,27 @@ async def run_agent_streamed(
         async for event in result.stream_events():
             if isinstance(event, RawResponsesStreamEvent):
                 data = event.data
-                if hasattr(data, "delta") and isinstance(data.delta, str) and data.delta:
-                    full_text += data.delta
-                    yield {"type": "text_delta", "delta": data.delta}
+                event_type = getattr(data, "type", None)
+                delta = getattr(data, "delta", None)
+                if (
+                    event_type == "response.output_text.delta"
+                    and isinstance(delta, str)
+                    and delta
+                ):
+                    full_text += delta
+                    yield {"type": "text_delta", "delta": delta}
+                elif (
+                    event_type == "response.reasoning_text.delta"
+                    and isinstance(delta, str)
+                    and delta
+                ):
+                    yield {"type": "thinking_delta", "delta": delta, "kind": "reasoning"}
+                elif (
+                    event_type == "response.reasoning_summary_text.delta"
+                    and isinstance(delta, str)
+                    and delta
+                ):
+                    yield {"type": "thinking_delta", "delta": delta, "kind": "summary"}
 
             elif isinstance(event, RunItemStreamEvent):
                 if event.name == "tool_called":

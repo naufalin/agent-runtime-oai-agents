@@ -601,6 +601,7 @@ async def test_chat_stream(
         model=None,
         reasoning_effort=None,
     ):
+        yield {"type": "thinking_delta", "delta": "thinking", "kind": "reasoning"}
         yield {"type": "text_delta", "delta": "Hello"}
         yield {"type": "text_delta", "delta": " world"}
         yield {
@@ -631,14 +632,19 @@ async def test_chat_stream(
                 async for line in resp.aiter_lines():
                     if line.startswith("data: "):
                         lines.append(json.loads(line[6:]))
-                assert len(lines) == 3
-                assert lines[0] == {"type": "text_delta", "delta": "Hello"}
-                assert lines[1] == {"type": "text_delta", "delta": " world"}
-                assert lines[2]["type"] == "done"
-                assert lines[2]["provider"] == "openrouter"
-                assert lines[2]["model"] == "minimax/minimax-m3"
-                assert lines[2]["usage"]["reasoning_tokens"] == 3
-                assert lines[2]["thinking"]["reasoning"] == "stream reasoning"
+                assert len(lines) == 4
+                assert lines[0] == {
+                    "type": "thinking_delta",
+                    "delta": "thinking",
+                    "kind": "reasoning",
+                }
+                assert lines[1] == {"type": "text_delta", "delta": "Hello"}
+                assert lines[2] == {"type": "text_delta", "delta": " world"}
+                assert lines[3]["type"] == "done"
+                assert lines[3]["provider"] == "openrouter"
+                assert lines[3]["model"] == "minimax/minimax-m3"
+                assert lines[3]["usage"]["reasoning_tokens"] == 3
+                assert lines[3]["thinking"]["reasoning"] == "stream reasoning"
 
 
 @pytest.mark.asyncio

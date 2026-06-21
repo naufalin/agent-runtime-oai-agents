@@ -1,8 +1,10 @@
 """Tests for the main agent definition."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agents.stream_events import RawResponsesStreamEvent
 from agents.usage import Usage
 
 from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent, run_agent_streamed
@@ -201,3 +203,85 @@ async def test_run_agent_streamed_validates_model_before_persisting_user_message
     mock_repo.add_message.assert_not_called()
     mock_repo.create_session.assert_not_called()
     mock_run_streamed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Hello"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(usage=Usage())
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RawResponsesStreamEvent(
+                data=SimpleNamespace(
+                    type="response.reasoning_text.delta",
+                    delta="thinking first",
+                )
+            )
+            yield RawResponsesStreamEvent(
+                data=SimpleNamespace(
+                    type="response.output_text.delta",
+                    delta="Visible answer",
+                )
+            )
+            yield RawResponsesStreamEvent(
+                data=SimpleNamespace(
+                    type="response.reasoning_summary_text.delta",
+                    delta="summary bit",
+                )
+            )
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch(
+            "agent_runtime.agents.runtime.Runner.run_streamed",
+            return_value=FakeStreamedResult(),
+        ),
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Hello",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+            )
+        ]
+
+    assert events[:3] == [
+        {"type": "thinking_delta", "delta": "thinking first", "kind": "reasoning"},
+        {"type": "text_delta", "delta": "Visible answer"},
+        {"type": "thinking_delta", "delta": "summary bit", "kind": "summary"},
+    ]
+    assert events[3]["type"] == "done"
+
+    final_message_args = mock_repo.add_message.call_args.args
+    assert final_message_args[2] == "Visible answer"
+    assert final_message_args[2] != "thinking firstVisible answersummary bit"

@@ -73,6 +73,20 @@ async def test_resolve_openrouter_model_from_model_id(monkeypatch, model_repo):
 
 
 @pytest.mark.asyncio
+async def test_resolve_openai_model_applies_reasoning_effort(model_repo):
+    resolved = await resolve_runtime_model(
+        model_repo=model_repo,
+        provider="openai",
+        reasoning_effort="high",
+    )
+
+    assert resolved.provider == "openai"
+    assert resolved.model_settings.reasoning is not None
+    assert resolved.model_settings.reasoning.effort == "high"
+    assert resolved.model_settings.reasoning.summary == "auto"
+
+
+@pytest.mark.asyncio
 async def test_resolve_openrouter_rejects_unsupported_model(monkeypatch, model_repo):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
 

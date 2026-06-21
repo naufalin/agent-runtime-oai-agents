@@ -107,7 +107,7 @@ async def resolve_runtime_model(
             provider="openai",
             model_name=resolved_model,
             model=resolved_model,
-            model_settings=ModelSettings(),
+            model_settings=_openai_model_settings(reasoning_effort),
         )
 
     if not settings.openrouter_api_key.strip():
@@ -279,6 +279,19 @@ def _openrouter_model_settings(
     return ModelSettings(
         include_usage=True,
         extra_body={"reasoning": reasoning},
+    )
+
+
+def _openai_model_settings(reasoning_effort: str | None) -> ModelSettings:
+    effort = (reasoning_effort or "").strip()
+    if not effort:
+        return ModelSettings()
+
+    return ModelSettings(
+        reasoning={
+            "effort": effort,
+            "summary": "auto",
+        },
     )
 
 
