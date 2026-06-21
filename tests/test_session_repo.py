@@ -146,3 +146,44 @@ async def test_get_latest_system_message_none_if_no_system(db):
     await repo.add_message(sess.id, "user", "Hello")
     result = await repo.get_latest_system_message(sess.id)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_add_tool_message(db):
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    result = await repo.add_message(
+        sess.id,
+        "tool",
+        "search results here",
+        tool_name="web_search",
+        tool_call_id="call_abc123",
+        tool_input={"query": "weather Jakarta"},
+        tool_output={"results": [{"title": "Weather", "url": "https://example.com"}]},
+        output_preview='{"results": [{"title": "Weather"',
+    )
+    assert result.role == "tool"
+    assert result.tool_name == "web_search"
+    assert result.tool_call_id == "call_abc123"
+    assert result.tool_input == {"query": "weather Jakarta"}
+    assert result.tool_output == {"results": [{"title": "Weather", "url": "https://example.com"}]}
+    assert result.output_preview == '{"results": [{"title": "Weather"'
+
+
+@pytest.mark.asyncio
+async def test_add_tool_message_minimal(db):
+    """Tool message with only tool_name — no call_id, input, or output."""
+    repo = SessionRepo(db)
+    sess = await repo.create_session("Test")
+    result = await repo.add_message(
+        sess.id,
+        "tool",
+        "raw output text",
+        tool_name="weather",
+    )
+    assert result.role == "tool"
+    assert result.tool_name == "weather"
+    assert result.tool_call_id is None
+    assert result.tool_input is None
+    assert result.tool_output is None
+    assert result.output_preview is None
