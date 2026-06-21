@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agents.stream_events import RawResponsesStreamEvent
+from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from agents.usage import Usage
 
 from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent, run_agent_streamed
@@ -285,3 +285,76 @@ async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatc
     final_message_args = mock_repo.add_message.call_args.args
     assert final_message_args[2] == "Visible answer"
     assert final_message_args[2] != "thinking firstVisible answersummary bit"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Hello"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(usage=Usage())
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RunItemStreamEvent(
+                name="tool_called",
+                item=SimpleNamespace(
+                    tool_name="web_search",
+                    call_id="call-1",
+                    raw_item=SimpleNamespace(arguments='{"query": "gold price"}'),
+                ),
+            )
+            yield RunItemStreamEvent(
+                name="tool_output",
+                item=SimpleNamespace(
+                    tool_name="web_search",
+                    call_id="call-1",
+                    output={"results": [{"title": "Gold price"}]},
+                    raw_item=None,
+                ),
+            )
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch(
+            "agent_runtime.agents.runtime.Runner.run_streamed",
+            return_value=FakeStreamedResult(),
+        ),
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Hello",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+            )
+        ]
+
+    tool_end = next(event for event in events if event["type"] == "tool_end")
+    assert tool_end["output_preview"] == "{'results': [{'title': 'Gold price'}]}"

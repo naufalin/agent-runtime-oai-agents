@@ -392,6 +392,7 @@ async def run_agent_streamed(
                         "type": "tool_end",
                         "tool": tool_name,
                         "call_id": call_id,
+                        "output_preview": output_preview,
                     }
                 elif event.name == "message_output_created":
                     text = ItemHelpers.text_message_output(event.item)
