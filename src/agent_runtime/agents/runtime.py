@@ -1,5 +1,6 @@
 """Main agent definition with all tools and persistence."""
 
+import json
 from dataclasses import dataclass
 
 from agents import Agent, ModelSettings, RunConfig, Runner
@@ -259,6 +260,7 @@ async def run_agent_streamed(
     )
 
     full_text = ""
+    _pending_tool_args: dict[str, dict] = {}  # call_id -> parsed args
     try:
         async for event in result.stream_events():
             if isinstance(event, RawResponsesStreamEvent):
@@ -287,11 +289,56 @@ async def run_agent_streamed(
 
             elif isinstance(event, RunItemStreamEvent):
                 if event.name == "tool_called":
-                    tool_name = getattr(event.item, "tool_name", "tool")
-                    yield {"type": "tool_start", "tool": tool_name}
+                    item = event.item
+                    tool_name = getattr(item, "tool_name", None) or "tool"
+                    call_id = getattr(item, "call_id", None)
+                    raw = getattr(item, "raw_item", None)
+                    args = None
+                    if raw is not None:
+                        args_str = getattr(raw, "arguments", None)
+                        if args_str:
+                            try:
+                                args = json.loads(args_str)
+                            except (json.JSONDecodeError, TypeError):
+                                args = {"raw": args_str}
+                    if call_id and args:
+                        _pending_tool_args[call_id] = args
+                    yield {
+                        "type": "tool_start",
+                        "tool": tool_name,
+                        "call_id": call_id,
+                        "args": args,
+                    }
+
                 elif event.name == "tool_output":
-                    tool_name = getattr(event.item, "tool_name", "tool")
-                    yield {"type": "tool_end", "tool": tool_name}
+                    item = event.item
+                    tool_name = getattr(item, "tool_name", None) or "tool"
+                    call_id = getattr(item, "call_id", None)
+                    output = getattr(item, "output", None)
+                    raw = getattr(item, "raw_item", None)
+                    output_str = (
+                        str(output) if output is not None
+                        else str(raw) if raw else ""
+                    )
+                    output_preview = output_str[:500] if output_str else None
+
+                    # Persist tool message to DB
+                    await repo.add_message(
+                        internal_id,
+                        "tool",
+                        content=output_str,
+                        tool_name=tool_name,
+                        tool_call_id=call_id,
+                        tool_input=_pending_tool_args.pop(call_id, None) if call_id else None,
+                        tool_output=output if isinstance(output, dict) else {"raw": output_str},
+                        output_preview=output_preview,
+                    )
+
+                    yield {
+                        "type": "tool_end",
+                        "tool": tool_name,
+                        "call_id": call_id,
+                    }
                 elif event.name == "message_output_created":
                     text = ItemHelpers.text_message_output(event.item)
                     if text and text != full_text:
