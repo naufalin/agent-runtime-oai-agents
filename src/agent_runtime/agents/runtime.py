@@ -168,6 +168,8 @@ async def run_agent(
         model_settings=runtime_model.model_settings,
     )
     run_context = RunContext(session_id=internal_id, repo=repo)
+    _run_started = time.monotonic()
+    _started_at_iso = datetime.now(timezone.utc).isoformat()
     result = await Runner.run(
         agent,
         input=input_items,
@@ -175,8 +177,20 @@ async def run_agent(
         hooks=_hooks,  # type: ignore[arg-type]
         run_config=RunConfig(tracing_disabled=runtime_model.tracing_disabled),
     )
+    _run_finished = time.monotonic()
     response = result.final_output
-    usage = serialize_usage(result.context_wrapper.usage)
+
+    # Perf metrics
+    _duration_s = _run_finished - _run_started
+    _usage_raw = serialize_usage(result.context_wrapper.usage)
+    _output_tokens = _usage_raw["output_tokens"] if _usage_raw else 0
+    _perf = {
+        "ttft_ms": round(_duration_s * 1000),
+        "tps": round(_output_tokens / _duration_s, 1) if _duration_s > 0 else 0.0,
+        "generation_duration_ms": round(_duration_s * 1000),
+        "started_at": _started_at_iso,
+    }
+    usage = serialize_usage(result.context_wrapper.usage, perf=_perf)
     thinking = extract_thinking(result.raw_responses)
 
     # Save agent response
