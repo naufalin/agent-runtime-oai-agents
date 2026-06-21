@@ -68,9 +68,9 @@ async def test_create_update_delete_runtime_model(db):
     assert updated.sort_order == 100
     assert updated.config_json == {"tier": "prod"}
 
-    assert await repo.get_by_provider_model(
-        "openrouter", "vendor/custom", enabled_only=True
-    ) is None
+    assert (
+        await repo.get_by_provider_model("openrouter", "vendor/custom", enabled_only=True) is None
+    )
     assert await repo.delete(created.id) is True
     assert await repo.get_by_provider_model("openrouter", "vendor/custom") is None
 

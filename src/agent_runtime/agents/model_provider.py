@@ -188,9 +188,7 @@ def serialize_usage(
                 "output_tokens": entry.output_tokens,
                 "total_tokens": entry.total_tokens,
                 "cached_tokens": _detail_value(entry.input_tokens_details, "cached_tokens"),
-                "reasoning_tokens": _detail_value(
-                    entry.output_tokens_details, "reasoning_tokens"
-                ),
+                "reasoning_tokens": _detail_value(entry.output_tokens_details, "reasoning_tokens"),
             }
             for entry in usage.request_usage_entries
         ],

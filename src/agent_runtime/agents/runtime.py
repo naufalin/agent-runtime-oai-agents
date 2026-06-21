@@ -3,7 +3,7 @@
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from agents import Agent, ModelSettings, RunConfig, Runner
@@ -149,17 +149,21 @@ async def run_agent(
         elif msg.role == "tool" and msg.tool_call_id:
             # Reconstruct function_call + function_call_output for the Responses API
             if msg.tool_input:
-                input_items.append({
-                    "type": "function_call",
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": msg.tool_call_id,
+                        "name": msg.tool_name or "unknown",
+                        "arguments": json.dumps(msg.tool_input),
+                    }
+                )
+            input_items.append(
+                {
+                    "type": "function_call_output",
                     "call_id": msg.tool_call_id,
-                    "name": msg.tool_name or "unknown",
-                    "arguments": json.dumps(msg.tool_input),
-                })
-            input_items.append({
-                "type": "function_call_output",
-                "call_id": msg.tool_call_id,
-                "output": msg.content,
-            })
+                    "output": msg.content,
+                }
+            )
 
     # Run the agent with the active system prompt, full history, and persistence hooks
     agent = create_agent(
@@ -169,7 +173,7 @@ async def run_agent(
     )
     run_context = RunContext(session_id=internal_id, repo=repo)
     _run_started = time.monotonic()
-    _started_at_iso = datetime.now(timezone.utc).isoformat()
+    _started_at_iso = datetime.now(UTC).isoformat()
     result = await Runner.run(
         agent,
         input=input_items,
@@ -258,7 +262,9 @@ async def run_agent_streamed(
         sess = await repo.create_session(title)
         internal_id = sess.id
         await repo.add_message(
-            internal_id, "system", default_prompt.content,
+            internal_id,
+            "system",
+            default_prompt.content,
             system_prompt_id=default_prompt.id,
         )
 
@@ -274,17 +280,21 @@ async def run_agent_streamed(
             input_items.append({"role": msg.role, "content": msg.content})
         elif msg.role == "tool" and msg.tool_call_id:
             if msg.tool_input:
-                input_items.append({
-                    "type": "function_call",
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": msg.tool_call_id,
+                        "name": msg.tool_name or "unknown",
+                        "arguments": json.dumps(msg.tool_input),
+                    }
+                )
+            input_items.append(
+                {
+                    "type": "function_call_output",
                     "call_id": msg.tool_call_id,
-                    "name": msg.tool_name or "unknown",
-                    "arguments": json.dumps(msg.tool_input),
-                })
-            input_items.append({
-                "type": "function_call_output",
-                "call_id": msg.tool_call_id,
-                "output": msg.content,
-            })
+                    "output": msg.content,
+                }
+            )
 
     agent = create_agent(
         system_prompt,
@@ -307,18 +317,14 @@ async def run_agent_streamed(
     _first_token_at: float | None = None
     _last_token_at: float | None = None
     _output_delta_count = 0
-    _started_at_iso = datetime.now(timezone.utc).isoformat()
+    _started_at_iso = datetime.now(UTC).isoformat()
     try:
         async for event in result.stream_events():
             if isinstance(event, RawResponsesStreamEvent):
                 data = event.data
                 event_type = getattr(data, "type", None)
                 delta = getattr(data, "delta", None)
-                if (
-                    event_type == "response.output_text.delta"
-                    and isinstance(delta, str)
-                    and delta
-                ):
+                if event_type == "response.output_text.delta" and isinstance(delta, str) and delta:
                     if _first_token_at is None:
                         _first_token_at = time.monotonic()
                     _last_token_at = time.monotonic()
@@ -367,10 +373,7 @@ async def run_agent_streamed(
                     call_id = getattr(item, "call_id", None)
                     output = getattr(item, "output", None)
                     raw = getattr(item, "raw_item", None)
-                    output_str = (
-                        str(output) if output is not None
-                        else str(raw) if raw else ""
-                    )
+                    output_str = str(output) if output is not None else str(raw) if raw else ""
                     output_preview = output_str[:500] if output_str else None
 
                     # Persist tool message to DB
@@ -393,7 +396,7 @@ async def run_agent_streamed(
                 elif event.name == "message_output_created":
                     text = ItemHelpers.text_message_output(event.item)
                     if text and text != full_text:
-                        remaining = text[len(full_text):]
+                        remaining = text[len(full_text) :]
                         if remaining:
                             yield {"type": "text_delta", "delta": remaining}
                         full_text = text

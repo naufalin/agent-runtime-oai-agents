@@ -152,7 +152,10 @@ def test_serialize_usage_includes_reasoning_tokens():
 
 def test_serialize_usage_includes_perf_when_provided():
     usage = Usage(
-        requests=1, input_tokens=100, output_tokens=50, total_tokens=150,
+        requests=1,
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
     )
     perf = {
         "ttft_ms": 320,
