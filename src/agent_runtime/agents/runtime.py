@@ -23,6 +23,7 @@ from agent_runtime.db.session_repo import SessionRepo
 from agent_runtime.ids import decode, encode
 from agent_runtime.tools.country import get_country_info
 from agent_runtime.tools.currency import convert_currency
+from agent_runtime.tools.visualization import generate_visualization
 from agent_runtime.tools.weather import get_weather
 from agent_runtime.tools.web_fetch import web_fetch
 from agent_runtime.tools.web_search import web_search
@@ -60,11 +61,10 @@ def create_agent(
         tools=[
             web_search,
             web_fetch,
-            # web_agent, # NOTE: for future use
-            # web_browser, # NOTE: for future user
             get_weather,
             convert_currency,
             get_country_info,
+            generate_visualization,
         ],
     )
 
@@ -388,11 +388,31 @@ async def run_agent_streamed(
                         output_preview=output_preview,
                     )
 
+                    # Check if this is a visualization tool output
+                    viz_html = None
+                    if tool_name == "generate_visualization":
+                        # Try to parse output as JSON and extract html field
+                        parsed_output = None
+                        if isinstance(output, dict):
+                            parsed_output = output
+                        elif isinstance(output, str):
+                            try:
+                                parsed_output = json.loads(output)
+                            except (json.JSONDecodeError, TypeError):
+                                parsed_output = None
+                        if (
+                            parsed_output
+                            and isinstance(parsed_output, dict)
+                            and "html" in parsed_output
+                        ):
+                            viz_html = parsed_output["html"]
+
                     yield {
                         "type": "tool_end",
                         "tool": tool_name,
                         "call_id": call_id,
                         "output_preview": output_preview,
+                        "viz_html": viz_html,
                     }
                 elif event.name == "message_output_created":
                     text = ItemHelpers.text_message_output(event.item)

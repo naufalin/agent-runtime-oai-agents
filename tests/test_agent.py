@@ -14,7 +14,7 @@ from agent_runtime.ids import encode
 
 def test_create_agent_has_all_tools():
     agent = create_agent("test prompt")
-    assert len(agent.tools) == 5
+    assert len(agent.tools) == 6
 
 
 def test_create_agent_has_name():
