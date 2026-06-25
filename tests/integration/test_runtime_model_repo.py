@@ -1,22 +1,8 @@
 """Tests for the runtime model registry repository."""
 
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine
 
-from agent_runtime.db.connection import Database
-from agent_runtime.db.models import Base
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
-
-
-@pytest.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    database = Database("sqlite+aiosqlite:///:memory:")
-    database.engine = engine
-    yield database
-    await engine.dispose()
 
 
 @pytest.mark.asyncio

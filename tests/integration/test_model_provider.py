@@ -7,7 +7,6 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice,
 from openai.types.responses import ResponseReasoningItem
 from openai.types.responses.response_reasoning_item import Content
 from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from agent_runtime.agents.model_provider import (
     OpenRouterChatCompletionsModel,
@@ -17,22 +16,14 @@ from agent_runtime.agents.model_provider import (
     serialize_usage,
     supported_models_payload,
 )
-from agent_runtime.db.connection import Database
-from agent_runtime.db.models import Base
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 
 
 @pytest.fixture
-async def model_repo():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    database = Database("sqlite+aiosqlite:///:memory:")
-    database.engine = engine
-    repo = RuntimeModelRepo(database)
+async def model_repo(db):
+    repo = RuntimeModelRepo(db)
     await repo.seed_defaults()
-    yield repo
-    await engine.dispose()
+    return repo
 
 
 @pytest.mark.asyncio

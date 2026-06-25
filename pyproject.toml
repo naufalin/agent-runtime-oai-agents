@@ -53,3 +53,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ASYNC"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "unit: fast, isolated tests (no DB, no network)",
+    "integration: tests that touch a real (in-memory) DB or the full app",
+]

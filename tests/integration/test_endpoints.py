@@ -696,3 +696,61 @@ async def test_chat_stream_session_not_found(mock_session_repo, mock_prompt_repo
             json={"message": "Hello"},
         )
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_with_limit(mock_session_repo, mock_prompt_repo):
+    mock_session_repo.list_sessions.return_value = [
+        Session(id=i, title=f"Session {i}") for i in range(1, 4)
+    ]
+    mock_prompt_repo.get_by_id.return_value = SystemPrompt(id=1, name="default", content="Helpful.")
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.get("/sessions?limit=3")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 3
+        mock_session_repo.list_sessions.assert_called_once_with(limit=3)
+
+
+@pytest.mark.asyncio
+async def test_create_session_default_title(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.post("/sessions", json={})
+        assert resp.status_code == 201
+        mock_session_repo.create_session.assert_called_once_with("New Session")
+
+
+@pytest.mark.asyncio
+async def test_get_session_invalid_encoded_id(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.get("/sessions/not_a_valid_id!!!")
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_switch_prompt_not_found(mock_session_repo, mock_prompt_repo):
+    from unittest.mock import patch
+
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    with patch(
+        "agent_runtime.api.routers.prompts.switch_prompt",
+        side_effect=ValueError("Prompt not found: nonexistent"),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/prompt",
+                json={"name": "nonexistent"},
+            )
+            assert resp.status_code == 400
+            assert "not found" in resp.json()["detail"].lower()
