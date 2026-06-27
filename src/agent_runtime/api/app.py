@@ -17,18 +17,21 @@ from agent_runtime.api.auth import require_bearer_token, require_docs_token  # n
 from agent_runtime.api.routers import models, prompts, sessions  # noqa: E402
 from agent_runtime.db.prompt_repo import SystemPromptRepo  # noqa: E402
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo  # noqa: E402
+from agent_runtime.tracing import flush_langfuse, init_langfuse  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: connect DB, seed default prompt
+    # Startup: init tracing, connect DB, seed default prompt
+    init_langfuse()
     db = await get_db()
     prompt_repo = SystemPromptRepo(db)
     model_repo = RuntimeModelRepo(db)
     await prompt_repo.seed_default()
     await model_repo.seed_defaults()
     yield
-    # Shutdown: disconnect DB
+    # Shutdown: flush tracing events, disconnect DB
+    flush_langfuse()
     await db.disconnect()
 
 

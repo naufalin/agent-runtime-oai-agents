@@ -16,6 +16,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi>=0.136.3",
     "httpx>=0.28.1",
+    "langfuse>=4.11.0",
     "openai-agents>=0.17.4",
     "psycopg2>=2.9.12",
     "psycopg2-binary>=2.9.12",

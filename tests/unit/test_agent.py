@@ -1,5 +1,6 @@
 """Tests for the main agent definition."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,14 @@ from agents.usage import Usage
 from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent, run_agent_streamed
 from agent_runtime.db.models import Message, RuntimeModel, Session, SystemPrompt
 from agent_runtime.ids import encode
+
+
+class FakeTraceSpan:
+    def __init__(self) -> None:
+        self.updates = []
+
+    def update(self, **kwargs):
+        self.updates.append(kwargs)
 
 
 def test_create_agent_has_all_tools():
@@ -361,6 +370,242 @@ async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_logs_generation_and_root_output(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+    span = FakeTraceSpan()
+
+    @asynccontextmanager
+    async def fake_langfuse_trace(*args, **kwargs):
+        yield span
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Hello"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+    mock_result = AsyncMock()
+    mock_result.final_output = "Hello back"
+    mock_result.context_wrapper.usage = Usage(input_tokens=3, output_tokens=2, total_tokens=5)
+    mock_result.raw_responses = []
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
+        patch("agent_runtime.agents.runtime.langfuse_trace", fake_langfuse_trace),
+        patch("agent_runtime.agents.runtime.log_generation") as log_generation,
+    ):
+        result = await run_agent("Hello", session_id=encode(1))
+
+    assert result.response == "Hello back"
+    assert span.updates == [{"output": "Hello back"}]
+    log_generation.assert_called_once()
+    assert log_generation.call_args.kwargs["output"] == "Hello back"
+    assert log_generation.call_args.kwargs["usage"]["total_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_traces_generation_tool_and_root(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+    span = FakeTraceSpan()
+    generation = object()
+    tool_observation = object()
+
+    @asynccontextmanager
+    async def fake_langfuse_trace(*args, **kwargs):
+        yield span
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Hello"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(
+            usage=Usage(input_tokens=4, output_tokens=6, total_tokens=10)
+        )
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RunItemStreamEvent(
+                name="tool_called",
+                item=SimpleNamespace(
+                    tool_name="web_search",
+                    call_id="call-1",
+                    raw_item=SimpleNamespace(arguments='{"query": "world cup"}'),
+                ),
+            )
+            yield RunItemStreamEvent(
+                name="tool_output",
+                item=SimpleNamespace(
+                    tool_name="web_search",
+                    call_id="call-1",
+                    output={"results": [{"title": "World Cup"}]},
+                    raw_item=None,
+                ),
+            )
+            yield RawResponsesStreamEvent(
+                data=SimpleNamespace(type="response.output_text.delta", delta="Final answer")
+            )
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch(
+            "agent_runtime.agents.runtime.Runner.run_streamed",
+            return_value=FakeStreamedResult(),
+        ),
+        patch("agent_runtime.agents.runtime.langfuse_trace", fake_langfuse_trace),
+        patch(
+            "agent_runtime.agents.runtime.start_generation",
+            return_value=generation,
+        ) as start_gen,
+        patch("agent_runtime.agents.runtime.finish_generation") as finish_gen,
+        patch(
+            "agent_runtime.agents.runtime.start_tool_observation",
+            return_value=tool_observation,
+        ) as start_tool,
+        patch("agent_runtime.agents.runtime.finish_tool_observation") as finish_tool,
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Hello",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+            )
+        ]
+
+    assert [event["type"] for event in events] == ["tool_start", "tool_end", "text_delta", "done"]
+    assert events[1]["output_preview"] == "{'results': [{'title': 'World Cup'}]}"
+    start_gen.assert_called_once()
+    assert start_gen.call_args.kwargs["input_data"] == [{"role": "user", "content": "Hello"}]
+    start_tool.assert_called_once()
+    assert start_tool.call_args.kwargs["input_data"] == {"query": "world cup"}
+    finish_tool.assert_called_once()
+    assert finish_tool.call_args.kwargs["output"] == {"results": [{"title": "World Cup"}]}
+    finish_gen.assert_called_once()
+    assert finish_gen.call_args.args[0] is generation
+    assert finish_gen.call_args.kwargs["output"] == "Final answer"
+    assert finish_gen.call_args.kwargs["usage"]["total_tokens"] == 10
+    assert span.updates == [{"output": "Final answer"}]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_traces_errors(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_db = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+    span = FakeTraceSpan()
+    generation = object()
+    tool_observation = object()
+
+    @asynccontextmanager
+    async def fake_langfuse_trace(*args, **kwargs):
+        yield span
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Hello"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    class FailingAfterToolStartResult:
+        async def stream_events(self):
+            yield RunItemStreamEvent(
+                name="tool_called",
+                item=SimpleNamespace(
+                    tool_name="web_search",
+                    call_id="call-1",
+                    raw_item=SimpleNamespace(arguments='{"query": "world cup"}'),
+                ),
+            )
+            raise RuntimeError("stream broke")
+
+    with (
+        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
+        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
+        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
+        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
+        patch(
+            "agent_runtime.agents.runtime.Runner.run_streamed",
+            return_value=FailingAfterToolStartResult(),
+        ),
+        patch("agent_runtime.agents.runtime.langfuse_trace", fake_langfuse_trace),
+        patch("agent_runtime.agents.runtime.start_generation", return_value=generation),
+        patch(
+            "agent_runtime.agents.runtime.start_tool_observation",
+            return_value=tool_observation,
+        ),
+        patch("agent_runtime.agents.runtime.mark_observation_error") as mark_error,
+        patch("agent_runtime.agents.runtime.finish_generation") as finish_gen,
+        patch("agent_runtime.agents.runtime.finish_tool_observation") as finish_tool,
+    ):
+        events = [event async for event in run_agent_streamed("Hello", session_id=encode(1))]
+
+    assert events[-1]["type"] == "error"
+    assert "stream broke" in events[-1]["message"]
+    marked_observations = [call.args[0] for call in mark_error.call_args_list]
+    assert generation in marked_observations
+    assert tool_observation in marked_observations
+    assert span in marked_observations
+    finish_tool.assert_called_once_with(tool_observation)
+    finish_gen.assert_called_once_with(generation)
+
+
+@pytest.mark.asyncio
 async def test_run_agent_existing_session_with_history(monkeypatch):
     """Existing session loads prior messages into agent context."""
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
@@ -463,7 +708,10 @@ async def test_run_agent_streamed_runner_error_yields_error_event(monkeypatch):
         patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
         patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
         patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch("agent_runtime.agents.runtime.Runner.run_streamed", return_value=FailingStreamedResult()),
+        patch(
+            "agent_runtime.agents.runtime.Runner.run_streamed",
+            return_value=FailingStreamedResult(),
+        ),
     ):
         events = [e async for e in run_agent_streamed("Hi", session_id=encode(1))]
 
