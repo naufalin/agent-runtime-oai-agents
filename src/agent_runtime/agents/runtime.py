@@ -59,6 +59,90 @@ def _extract_model_parameters(model_settings: ModelSettings) -> dict[str, Any]:
     return params
 
 
+def _looks_like_visualization_args(args: Any) -> bool:
+    return (
+        isinstance(args, dict)
+        and isinstance(args.get("chart_type"), str)
+        and isinstance(args.get("data"), str)
+        and isinstance(args.get("title"), str)
+    )
+
+
+def _infer_known_tool_from_args(args: Any) -> str | None:
+    if not isinstance(args, dict):
+        return None
+    if _looks_like_visualization_args(args):
+        return "generate_visualization"
+    if isinstance(args.get("query"), str):
+        return "web_search"
+    if isinstance(args.get("urls"), list):
+        return "web_fetch"
+    if isinstance(args.get("city"), str):
+        return "get_weather"
+    if (
+        isinstance(args.get("amount"), int | float)
+        and isinstance(args.get("from_currency"), str)
+        and isinstance(args.get("to_currency"), str)
+    ):
+        return "convert_currency"
+    if isinstance(args.get("country_name"), str):
+        return "get_country_info"
+    return None
+
+
+def _infer_known_tool_from_output(output: Any) -> str | None:
+    parsed_output = _parse_tool_output(output)
+    if parsed_output is not None and isinstance(parsed_output.get("html"), str):
+        return "generate_visualization"
+
+    if not isinstance(output, str):
+        return None
+    if output.startswith("[") and "](http" in output:
+        return "web_search"
+    if output.startswith("## ") or "## Failed URLs" in output:
+        return "web_fetch"
+    if output.startswith("Weather in "):
+        return "get_weather"
+    if "\nRate: 1 " in output:
+        return "convert_currency"
+    if "\n  Capital: " in output and "\n  Population: " in output:
+        return "get_country_info"
+    return None
+
+
+def _parse_tool_output(output: Any) -> dict[str, Any] | None:
+    if isinstance(output, dict):
+        return output
+    if isinstance(output, str):
+        try:
+            parsed = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _infer_tool_name(tool_name: str, args: Any = None, output: Any = None) -> str:
+    if tool_name != "tool":
+        return tool_name
+    inferred = _infer_known_tool_from_args(args) or _infer_known_tool_from_output(output)
+    if inferred:
+        return inferred
+    return tool_name
+
+
+def _extract_visualization_html(tool_name: str, args: Any, output: Any) -> str | None:
+    parsed_output = _parse_tool_output(output)
+    if parsed_output is None:
+        return None
+    html = parsed_output.get("html")
+    if not isinstance(html, str) or not html:
+        return None
+    if tool_name == "generate_visualization" or _looks_like_visualization_args(args):
+        return html
+    return None
+
+
 _DEFAULT_TOOLS = [
     web_search,
     web_fetch,
@@ -223,6 +307,7 @@ async def run_agent(
             agent,
             input=input_items,
             context=run_context,
+            max_turns=settings.max_turns,
             hooks=_hooks,  # type: ignore[arg-type]
             run_config=RunConfig(
                 tracing_disabled=runtime_model.tracing_disabled or is_langfuse_active()
@@ -456,6 +541,7 @@ async def run_agent_streamed(
                                     args = json.loads(args_str)
                                 except (json.JSONDecodeError, TypeError):
                                     args = {"raw": args_str}
+                        tool_name = _infer_tool_name(tool_name, args)
                         if call_id and args:
                             _pending_tool_args[call_id] = args
                         tool_key = call_id or f"{tool_name}:{_tool_sequence}"
@@ -487,6 +573,8 @@ async def run_agent_streamed(
                         raw = getattr(item, "raw_item", None)
                         output_str = str(output) if output is not None else str(raw) if raw else ""
                         output_preview = output_str[:500] if output_str else None
+                        pending_args = _pending_tool_args.pop(call_id, None) if call_id else None
+                        tool_name = _infer_tool_name(tool_name, pending_args, output)
                         if call_id and call_id in _tool_keys_by_call_id:
                             tool_key = _tool_keys_by_call_id.pop(call_id)
                         else:
@@ -509,7 +597,7 @@ async def run_agent_streamed(
                             content=output_str,
                             tool_name=tool_name,
                             tool_call_id=call_id,
-                            tool_input=_pending_tool_args.pop(call_id, None) if call_id else None,
+                            tool_input=pending_args,
                             tool_output=output if isinstance(output, dict) else {"raw": output_str},
                             output_preview=output_preview,
                         )
@@ -534,24 +622,11 @@ async def run_agent_streamed(
                             },
                         )
 
-                        # Check if this is a visualization tool output
-                        viz_html = None
-                        if tool_name == "generate_visualization":
-                            # Try to parse output as JSON and extract html field
-                            parsed_output = None
-                            if isinstance(output, dict):
-                                parsed_output = output
-                            elif isinstance(output, str):
-                                try:
-                                    parsed_output = json.loads(output)
-                                except (json.JSONDecodeError, TypeError):
-                                    parsed_output = None
-                            if (
-                                parsed_output
-                                and isinstance(parsed_output, dict)
-                                and "html" in parsed_output
-                            ):
-                                viz_html = parsed_output["html"]
+                        viz_html = _extract_visualization_html(
+                            tool_name,
+                            pending_args,
+                            output,
+                        )
 
                         yield {
                             "type": "tool_end",
@@ -562,10 +637,23 @@ async def run_agent_streamed(
                         }
                     elif event.name == "message_output_created":
                         text = ItemHelpers.text_message_output(event.item)
-                        if text and text != full_text:
+                        if text and not full_text:
+                            if _first_token_at is None:
+                                _first_token_at = time.monotonic()
+                            _last_token_at = time.monotonic()
+                            _output_delta_count += 1
+                            full_text = text
+                            yield {"type": "text_delta", "delta": text}
+                        elif text and text.startswith(full_text):
                             remaining = text[len(full_text) :]
                             if remaining:
+                                if _first_token_at is None:
+                                    _first_token_at = time.monotonic()
+                                _last_token_at = time.monotonic()
+                                _output_delta_count += 1
                                 yield {"type": "text_delta", "delta": remaining}
+                            full_text = text
+                        elif text:
                             full_text = text
 
             # Compute perf metrics

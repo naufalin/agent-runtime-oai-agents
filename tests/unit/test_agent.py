@@ -1,5 +1,6 @@
 """Tests for the main agent definition."""
 
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -296,6 +297,78 @@ async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_run_agent_streamed_does_not_emit_mismatched_final_suffix(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Hello"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(usage=Usage())
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RawResponsesStreamEvent(
+                data=SimpleNamespace(
+                    type="response.output_text.delta",
+                    delta="Visible streamed text.",
+                )
+            )
+            yield RunItemStreamEvent(
+                name="message_output_created",
+                item=SimpleNamespace(),
+            )
+
+    with (
+        patch(
+            "agent_runtime.agents.runtime.Runner.run_streamed",
+            return_value=FakeStreamedResult(),
+        ),
+        patch(
+            "agents.items.ItemHelpers.text_message_output",
+            return_value="Corrected final text.",
+        ),
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Hello",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
+            )
+        ]
+
+    assert [event for event in events if event["type"] == "text_delta"] == [
+        {"type": "text_delta", "delta": "Visible streamed text."}
+    ]
+    final_message_args = mock_repo.add_message.call_args.args
+    assert final_message_args[2] == "Corrected final text."
+
+
+@pytest.mark.asyncio
 async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
     mock_repo = AsyncMock()
@@ -363,6 +436,239 @@ async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
 
     tool_end = next(event for event in events if event["type"] == "tool_end")
     assert tool_end["output_preview"] == "{'results': [{'title': 'Gold price'}]}"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_includes_visualization_html(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Make a chart"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    viz_html = "<!DOCTYPE html><html><body><div id='chart'></div></body></html>"
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(usage=Usage())
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RunItemStreamEvent(
+                name="tool_called",
+                item=SimpleNamespace(
+                    tool_name="generate_visualization",
+                    call_id="viz-1",
+                    raw_item=SimpleNamespace(arguments='{"chart_type": "bar"}'),
+                ),
+            )
+            yield RunItemStreamEvent(
+                name="tool_output",
+                item=SimpleNamespace(
+                    tool_name="generate_visualization",
+                    call_id="viz-1",
+                    output=f'{{"html": "{viz_html}", "title": "Chart"}}',
+                    raw_item=None,
+                ),
+            )
+
+    with patch(
+        "agent_runtime.agents.runtime.Runner.run_streamed",
+        return_value=FakeStreamedResult(),
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Make a chart",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
+            )
+        ]
+
+    tool_end = next(event for event in events if event["type"] == "tool_end")
+    assert tool_end["tool"] == "generate_visualization"
+    assert tool_end["viz_html"] == viz_html
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_infers_generic_visualization_tool(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Make a chart"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    viz_html = "<!DOCTYPE html><html><body><div id='chart'></div></body></html>"
+    args = {
+        "chart_type": "bar",
+        "data": '{"series": [{"data": [1], "type": "bar"}]}',
+        "title": "Chart",
+    }
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(usage=Usage())
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RunItemStreamEvent(
+                name="tool_called",
+                item=SimpleNamespace(
+                    tool_name=None,
+                    call_id="viz-1",
+                    raw_item=SimpleNamespace(arguments=json.dumps(args)),
+                ),
+            )
+            yield RunItemStreamEvent(
+                name="tool_output",
+                item=SimpleNamespace(
+                    tool_name=None,
+                    call_id="viz-1",
+                    output=json.dumps({"html": viz_html, "title": "Chart"}),
+                    raw_item=None,
+                ),
+            )
+
+    with patch(
+        "agent_runtime.agents.runtime.Runner.run_streamed",
+        return_value=FakeStreamedResult(),
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Make a chart",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
+            )
+        ]
+
+    assert events[0]["type"] == "tool_start"
+    assert events[0]["tool"] == "generate_visualization"
+    tool_end = next(event for event in events if event["type"] == "tool_end")
+    assert tool_end["tool"] == "generate_visualization"
+    assert tool_end["viz_html"] == viz_html
+    assert mock_repo.add_message.call_args_list[-1].kwargs["tool_name"] == (
+        "generate_visualization"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_streamed_infers_generic_web_search_tool(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    mock_repo = AsyncMock()
+    mock_prompt_repo = AsyncMock()
+    mock_model_repo = AsyncMock()
+
+    mock_repo.get_session.return_value = Session(id=1, title="Test")
+    mock_repo.get_latest_system_message.return_value = Message(
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default prompt",
+    )
+    mock_repo.get_messages.return_value = [
+        Message(id=2, session_id=1, role="user", content="Search"),
+    ]
+    mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
+    )
+
+    class FakeStreamedResult:
+        context_wrapper = SimpleNamespace(usage=Usage())
+        raw_responses = []
+
+        async def stream_events(self):
+            yield RunItemStreamEvent(
+                name="tool_called",
+                item=SimpleNamespace(
+                    tool_name=None,
+                    call_id="search-1",
+                    raw_item=SimpleNamespace(
+                        arguments=json.dumps(
+                            {"query": "DKI Jakarta population", "location": "ID"}
+                        )
+                    ),
+                ),
+            )
+            yield RunItemStreamEvent(
+                name="tool_output",
+                item=SimpleNamespace(
+                    tool_name=None,
+                    call_id="search-1",
+                    output="[DKI Jakarta](https://example.com)\n  population data",
+                    raw_item=None,
+                ),
+            )
+
+    with patch(
+        "agent_runtime.agents.runtime.Runner.run_streamed",
+        return_value=FakeStreamedResult(),
+    ):
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Search",
+                session_id=encode(1),
+                provider="openai",
+                model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
+            )
+        ]
+
+    assert events[0]["type"] == "tool_start"
+    assert events[0]["tool"] == "web_search"
+    tool_end = next(event for event in events if event["type"] == "tool_end")
+    assert tool_end["tool"] == "web_search"
+    assert mock_repo.add_message.call_args_list[-1].kwargs["tool_name"] == "web_search"
 
 
 @pytest.mark.asyncio
