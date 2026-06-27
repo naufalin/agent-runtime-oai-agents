@@ -3,7 +3,9 @@
 import asyncio
 import sys
 
-from agent_runtime.agents.runtime import get_db, run_agent, switch_prompt
+from agent_runtime.agents.runtime import AgentFactory, run_agent, switch_prompt
+from agent_runtime.config import settings
+from agent_runtime.db.connection import get_db
 from agent_runtime.db.prompt_repo import SystemPromptRepo
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 from agent_runtime.db.session_repo import SessionRepo
@@ -13,7 +15,9 @@ from agent_runtime.ids import decode, encode
 async def chat_loop(session_id: str | None = None) -> None:
     db = await get_db()
     repo = SessionRepo(db)
+    prompt_repo = SystemPromptRepo(db)
     model_repo = RuntimeModelRepo(db)
+    factory = AgentFactory(default_model=settings.openai_model)
     await model_repo.seed_defaults()
     internal_id: int | None = None
 
@@ -84,7 +88,12 @@ async def chat_loop(session_id: str | None = None) -> None:
             name = user_input[7:].strip()
             if session_id:
                 try:
-                    await switch_prompt(session_id, name)
+                    await switch_prompt(
+                        session_id,
+                        name,
+                        session_repo=repo,
+                        prompt_repo=prompt_repo,
+                    )
                     print(f"  Switched to prompt: {name}\n")
                 except ValueError as e:
                     print(f"  Error: {e}\n")
@@ -92,7 +101,14 @@ async def chat_loop(session_id: str | None = None) -> None:
                 print("  Start a session first.\n")
             continue
 
-        result = await run_agent(user_input, session_id=session_id)
+        result = await run_agent(
+            user_input,
+            session_id=session_id,
+            session_repo=repo,
+            prompt_repo=prompt_repo,
+            model_repo=model_repo,
+            agent_factory=factory,
+        )
         session_id = result.session_id
         if internal_id is None:
             internal_id = decode(session_id)

@@ -1,7 +1,7 @@
 """Tests for API endpoints."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -107,7 +107,11 @@ def mock_runtime_model_repo():
 @pytest.fixture(autouse=True)
 def _set_auth_token(monkeypatch):
     """Configure API auth for endpoint tests."""
-    monkeypatch.setenv("AGENT_RUNTIME_BEARER_TOKEN", "test-token")
+    from agent_runtime.config import Settings
+
+    monkeypatch.setattr(
+        "agent_runtime.api.auth.settings", Settings(agent_runtime_bearer_token="test-token")
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -168,7 +172,9 @@ async def test_private_endpoint_with_malformed_header_returns_401():
 
 @pytest.mark.asyncio
 async def test_private_endpoint_with_blank_configured_token_returns_503(monkeypatch):
-    monkeypatch.setenv("AGENT_RUNTIME_BEARER_TOKEN", "")
+    from agent_runtime.config import Settings
+
+    monkeypatch.setattr("agent_runtime.api.auth.settings", Settings(agent_runtime_bearer_token=""))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/sessions", headers=AUTH_HEADERS)
         assert resp.status_code == 503
@@ -521,6 +527,10 @@ async def test_chat_passes_model_options(mock_session_repo, mock_prompt_repo):
                 provider="openrouter",
                 model="deepseek/deepseek-v4-pro",
                 reasoning_effort="xhigh",
+                session_repo=ANY,
+                prompt_repo=ANY,
+                model_repo=ANY,
+                agent_factory=ANY,
             )
 
 
@@ -600,6 +610,7 @@ async def test_chat_stream(
         provider=None,
         model=None,
         reasoning_effort=None,
+        **kwargs,
     ):
         yield {"type": "thinking_delta", "delta": "thinking", "kind": "reasoning"}
         yield {"type": "text_delta", "delta": "Hello"}

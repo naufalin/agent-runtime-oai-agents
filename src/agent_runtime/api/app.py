@@ -12,9 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.openapi.utils import get_openapi  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 
-from agent_runtime.agents.runtime import get_db  # noqa: E402
 from agent_runtime.api.auth import require_bearer_token, require_docs_token  # noqa: E402
 from agent_runtime.api.routers import models, prompts, sessions  # noqa: E402
+from agent_runtime.db.connection import get_db  # noqa: E402
 from agent_runtime.db.prompt_repo import SystemPromptRepo  # noqa: E402
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo  # noqa: E402
 from agent_runtime.tracing import flush_langfuse, init_langfuse  # noqa: E402

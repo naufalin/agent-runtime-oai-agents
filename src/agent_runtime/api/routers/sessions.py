@@ -6,8 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agent_runtime.agents.model_provider import resolve_runtime_model
-from agent_runtime.agents.runtime import run_agent, run_agent_streamed
-from agent_runtime.api.deps import get_prompt_repo, get_runtime_model_repo, get_session_repo
+from agent_runtime.agents.runtime import AgentFactory, run_agent, run_agent_streamed
+from agent_runtime.api.deps import (
+    get_agent_factory,
+    get_prompt_repo,
+    get_runtime_model_repo,
+    get_session_repo,
+)
 from agent_runtime.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -126,6 +131,9 @@ async def chat(
     encoded_id: str,
     body: ChatRequest,
     session_repo: SessionRepo = Depends(get_session_repo),
+    prompt_repo: SystemPromptRepo = Depends(get_prompt_repo),
+    model_repo: RuntimeModelRepo = Depends(get_runtime_model_repo),
+    agent_factory: AgentFactory = Depends(get_agent_factory),
 ):
     try:
         sid = decode(encoded_id)
@@ -143,6 +151,10 @@ async def chat(
             provider=body.provider,
             model=body.model,
             reasoning_effort=body.reasoning_effort,
+            session_repo=session_repo,
+            prompt_repo=prompt_repo,
+            model_repo=model_repo,
+            agent_factory=agent_factory,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -168,6 +180,8 @@ async def chat_stream(
     body: ChatRequest,
     session_repo: SessionRepo = Depends(get_session_repo),
     model_repo: RuntimeModelRepo = Depends(get_runtime_model_repo),
+    prompt_repo: SystemPromptRepo = Depends(get_prompt_repo),
+    agent_factory: AgentFactory = Depends(get_agent_factory),
 ):
     try:
         sid = decode(encoded_id)
@@ -196,6 +210,10 @@ async def chat_stream(
                 provider=body.provider,
                 model=body.model,
                 reasoning_effort=body.reasoning_effort,
+                session_repo=session_repo,
+                prompt_repo=prompt_repo,
+                model_repo=model_repo,
+                agent_factory=agent_factory,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except ValueError as e:

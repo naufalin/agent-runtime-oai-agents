@@ -33,3 +33,17 @@ class Database:
         assert self.engine is not None, "Database not connected — call connect() first"
         async with AsyncSession(self.engine, expire_on_commit=False) as session, session.begin():
             yield session
+
+
+_db: Database | None = None
+
+
+async def get_db() -> Database:
+    """Get or create the shared async database engine."""
+    global _db
+    if _db is None or _db.engine is None:
+        from agent_runtime.config import settings as _settings
+
+        _db = Database(_settings.database_url)
+        _db.connect()
+    return _db

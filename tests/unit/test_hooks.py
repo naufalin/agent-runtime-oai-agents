@@ -77,7 +77,9 @@ async def test_on_tool_end_truncates_long_result(hooks, context_wrapper, agent, 
 
 
 @pytest.mark.asyncio
-async def test_on_tool_end_exactly_2000_not_truncated(hooks, context_wrapper, agent, tool, mock_repo):
+async def test_on_tool_end_exactly_2000_not_truncated(
+    hooks, context_wrapper, agent, tool, mock_repo
+):
     exact_result = "y" * 2000
     await hooks.on_tool_end(context_wrapper, agent, tool, exact_result)
 
@@ -100,7 +102,9 @@ async def test_on_tool_start_uses_correct_session_id(hooks, agent, tool, mock_re
 
 
 @pytest.mark.asyncio
-async def test_on_tool_end_converts_non_string_result(hooks, context_wrapper, agent, tool, mock_repo):
+async def test_on_tool_end_converts_non_string_result(
+    hooks, context_wrapper, agent, tool, mock_repo
+):
     dict_result = {"key": "value", "count": 42}
     await hooks.on_tool_end(context_wrapper, agent, tool, dict_result)
 

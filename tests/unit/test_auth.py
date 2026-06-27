@@ -3,11 +3,14 @@
 import pytest
 
 from agent_runtime.api.auth import _validate_token
+from agent_runtime.config import Settings
 
 
 @pytest.fixture(autouse=True)
 def _set_token(monkeypatch):
-    monkeypatch.setenv("AGENT_RUNTIME_BEARER_TOKEN", "test-secret")
+    monkeypatch.setattr(
+        "agent_runtime.api.auth.settings", Settings(agent_runtime_bearer_token="test-secret")
+    )
 
 
 class TestBearerHeader:
@@ -60,19 +63,21 @@ class TestQueryToken:
 
     def test_query_token_takes_precedence_over_header(self):
         """When both are provided, query token is checked first."""
-        result = _validate_token(
-            authorization="Bearer wrong", query_token="test-secret"
-        )
+        result = _validate_token(authorization="Bearer wrong", query_token="test-secret")
         assert result == "test-secret"
 
 
 class TestEmptyConfiguredToken:
     def test_empty_configured_token_returns_503(self, monkeypatch):
-        monkeypatch.setenv("AGENT_RUNTIME_BEARER_TOKEN", "")
+        monkeypatch.setattr(
+            "agent_runtime.api.auth.settings", Settings(agent_runtime_bearer_token="")
+        )
         with pytest.raises(Exception, match="503"):
             _validate_token(authorization="Bearer anything")
 
     def test_whitespace_only_configured_token_returns_503(self, monkeypatch):
-        monkeypatch.setenv("AGENT_RUNTIME_BEARER_TOKEN", "   ")
+        monkeypatch.setattr(
+            "agent_runtime.api.auth.settings", Settings(agent_runtime_bearer_token="   ")
+        )
         with pytest.raises(Exception, match="503"):
             _validate_token(authorization="Bearer anything")

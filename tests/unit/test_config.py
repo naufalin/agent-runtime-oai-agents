@@ -1,7 +1,5 @@
 """Unit tests for application settings (config.py)."""
 
-import pytest
-
 from agent_runtime.config import Settings
 
 

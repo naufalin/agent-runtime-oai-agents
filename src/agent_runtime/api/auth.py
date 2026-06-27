@@ -4,7 +4,7 @@ import secrets
 
 from fastapi import Header, HTTPException, Query
 
-from agent_runtime.config import Settings
+from agent_runtime.config import settings
 
 
 def _auth_error() -> HTTPException:
@@ -32,7 +32,7 @@ def _validate_token(
     authorization: str | None = None,
     query_token: str | None = None,
 ) -> str:
-    expected_token = Settings().agent_runtime_bearer_token.strip()
+    expected_token = settings.agent_runtime_bearer_token.strip()
     if not expected_token:
         raise HTTPException(
             status_code=503,

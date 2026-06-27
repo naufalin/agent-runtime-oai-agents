@@ -8,7 +8,13 @@ import pytest
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from agents.usage import Usage
 
-from agent_runtime.agents.runtime import AgentResponse, create_agent, run_agent, run_agent_streamed
+from agent_runtime.agents.runtime import (
+    AgentFactory,
+    AgentResponse,
+    create_agent,
+    run_agent,
+    run_agent_streamed,
+)
 from agent_runtime.db.models import Message, RuntimeModel, Session, SystemPrompt
 from agent_runtime.ids import encode
 
@@ -39,7 +45,6 @@ def test_create_agent_uses_prompt():
 @pytest.mark.asyncio
 async def test_run_agent_inserts_system_message_for_new_session(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -72,14 +77,14 @@ async def test_run_agent_inserts_system_message_for_new_session(monkeypatch):
     mock_result.context_wrapper.usage = Usage()
     mock_result.raw_responses = []
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result) as mock_run,
-    ):
-        result = await run_agent("Hi there")
+    with patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result) as mock_run:
+        result = await run_agent(
+            "Hi there",
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+            model_repo=mock_model_repo,
+            agent_factory=AgentFactory(),
+        )
 
         assert isinstance(result, AgentResponse)
         assert result.response == "Hello!"
@@ -100,7 +105,6 @@ async def test_run_agent_inserts_system_message_for_new_session(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_uses_latest_system_prompt(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -126,16 +130,15 @@ async def test_run_agent_uses_latest_system_prompt(monkeypatch):
         enabled=True,
     )
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
-    ):
-        from agent_runtime.ids import encode
-
-        result = await run_agent("Ahoy", session_id=encode(1))
+    with patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result):
+        result = await run_agent(
+            "Ahoy",
+            session_id=encode(1),
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+            model_repo=mock_model_repo,
+            agent_factory=AgentFactory(),
+        )
 
         assert result.response == "Arr!"
         mock_prompt_repo.seed_default.assert_not_called()
@@ -144,7 +147,6 @@ async def test_run_agent_uses_latest_system_prompt(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_validates_model_before_persisting_user_message(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -157,10 +159,6 @@ async def test_run_agent_validates_model_before_persisting_user_message(monkeypa
     )
 
     with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
         patch("agent_runtime.agents.runtime.Runner.run") as mock_run,
         pytest.raises(ValueError, match="OPENROUTER_API_KEY is required"),
     ):
@@ -169,6 +167,10 @@ async def test_run_agent_validates_model_before_persisting_user_message(monkeypa
             session_id=encode(1),
             provider="openrouter",
             model="deepseek/deepseek-v4-flash",
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+            model_repo=mock_model_repo,
+            agent_factory=AgentFactory(),
         )
 
     mock_repo.add_message.assert_not_called()
@@ -179,7 +181,6 @@ async def test_run_agent_validates_model_before_persisting_user_message(monkeypa
 @pytest.mark.asyncio
 async def test_run_agent_streamed_validates_model_before_persisting_user_message(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -192,10 +193,6 @@ async def test_run_agent_streamed_validates_model_before_persisting_user_message
     )
 
     with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
         patch("agent_runtime.agents.runtime.Runner.run_streamed") as mock_run_streamed,
         pytest.raises(ValueError, match="OPENROUTER_API_KEY is required"),
     ):
@@ -206,6 +203,10 @@ async def test_run_agent_streamed_validates_model_before_persisting_user_message
                 session_id=encode(1),
                 provider="openrouter",
                 model="deepseek/deepseek-v4-flash",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
             )
         ]
 
@@ -217,7 +218,7 @@ async def test_run_agent_streamed_validates_model_before_persisting_user_message
 @pytest.mark.asyncio
 async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
+    AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -264,15 +265,9 @@ async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatc
                 )
             )
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch(
-            "agent_runtime.agents.runtime.Runner.run_streamed",
-            return_value=FakeStreamedResult(),
-        ),
+    with patch(
+        "agent_runtime.agents.runtime.Runner.run_streamed",
+        return_value=FakeStreamedResult(),
     ):
         events = [
             event
@@ -281,6 +276,10 @@ async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatc
                 session_id=encode(1),
                 provider="openai",
                 model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
             )
         ]
 
@@ -299,7 +298,6 @@ async def test_run_agent_streamed_separates_thinking_deltas_from_text(monkeypatc
 @pytest.mark.asyncio
 async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -345,15 +343,9 @@ async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
                 ),
             )
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch(
-            "agent_runtime.agents.runtime.Runner.run_streamed",
-            return_value=FakeStreamedResult(),
-        ),
+    with patch(
+        "agent_runtime.agents.runtime.Runner.run_streamed",
+        return_value=FakeStreamedResult(),
     ):
         events = [
             event
@@ -362,6 +354,10 @@ async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
                 session_id=encode(1),
                 provider="openai",
                 model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
             )
         ]
 
@@ -372,7 +368,6 @@ async def test_run_agent_streamed_includes_tool_output_preview(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_logs_generation_and_root_output(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -405,15 +400,18 @@ async def test_run_agent_logs_generation_and_root_output(monkeypatch):
     mock_result.raw_responses = []
 
     with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
         patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
         patch("agent_runtime.agents.runtime.langfuse_trace", fake_langfuse_trace),
         patch("agent_runtime.agents.runtime.log_generation") as log_generation,
     ):
-        result = await run_agent("Hello", session_id=encode(1))
+        result = await run_agent(
+            "Hello",
+            session_id=encode(1),
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+            model_repo=mock_model_repo,
+            agent_factory=AgentFactory(),
+        )
 
     assert result.response == "Hello back"
     assert span.updates == [{"output": "Hello back"}]
@@ -425,7 +423,6 @@ async def test_run_agent_logs_generation_and_root_output(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_streamed_traces_generation_tool_and_root(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -484,10 +481,6 @@ async def test_run_agent_streamed_traces_generation_tool_and_root(monkeypatch):
             )
 
     with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
         patch(
             "agent_runtime.agents.runtime.Runner.run_streamed",
             return_value=FakeStreamedResult(),
@@ -511,6 +504,10 @@ async def test_run_agent_streamed_traces_generation_tool_and_root(monkeypatch):
                 session_id=encode(1),
                 provider="openai",
                 model="gpt-5.4-mini",
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
             )
         ]
 
@@ -532,7 +529,6 @@ async def test_run_agent_streamed_traces_generation_tool_and_root(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_streamed_traces_errors(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
@@ -575,10 +571,6 @@ async def test_run_agent_streamed_traces_errors(monkeypatch):
             raise RuntimeError("stream broke")
 
     with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
         patch(
             "agent_runtime.agents.runtime.Runner.run_streamed",
             return_value=FailingAfterToolStartResult(),
@@ -593,7 +585,17 @@ async def test_run_agent_streamed_traces_errors(monkeypatch):
         patch("agent_runtime.agents.runtime.finish_generation") as finish_gen,
         patch("agent_runtime.agents.runtime.finish_tool_observation") as finish_tool,
     ):
-        events = [event async for event in run_agent_streamed("Hello", session_id=encode(1))]
+        events = [
+            event
+            async for event in run_agent_streamed(
+                "Hello",
+                session_id=encode(1),
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
+            )
+        ]
 
     assert events[-1]["type"] == "error"
     assert "stream broke" in events[-1]["message"]
@@ -609,14 +611,16 @@ async def test_run_agent_streamed_traces_errors(monkeypatch):
 async def test_run_agent_existing_session_with_history(monkeypatch):
     """Existing session loads prior messages into agent context."""
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
 
     mock_repo.get_session.return_value = Session(id=1, title="Existing")
     mock_repo.get_latest_system_message.return_value = Message(
-        id=1, session_id=1, role="system", content="You are helpful.",
+        id=1,
+        session_id=1,
+        role="system",
+        content="You are helpful.",
     )
     mock_repo.get_messages.return_value = [
         Message(id=1, session_id=1, role="system", content="You are helpful."),
@@ -631,18 +635,22 @@ async def test_run_agent_existing_session_with_history(monkeypatch):
     mock_result.raw_responses = []
 
     mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
-        id=1, provider="openai", model_id="gpt-5.4-mini",
-        name="gpt-5.4-mini", enabled=True,
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
     )
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result),
-    ):
-        result = await run_agent("Second", session_id=encode(1))
+    with patch("agent_runtime.agents.runtime.Runner.run", return_value=mock_result):
+        result = await run_agent(
+            "Second",
+            session_id=encode(1),
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+            model_repo=mock_model_repo,
+            agent_factory=AgentFactory(),
+        )
 
     assert result.response == "Second reply"
     mock_prompt_repo.seed_default.assert_not_called()
@@ -653,49 +661,62 @@ async def test_run_agent_existing_session_with_history(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_runner_error_propagates(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
 
     mock_repo.get_session.return_value = Session(id=1, title="Test")
     mock_repo.get_latest_system_message.return_value = Message(
-        id=1, session_id=1, role="system", content="Default",
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default",
     )
     mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
-        id=1, provider="openai", model_id="gpt-5.4-mini",
-        name="gpt-5.4-mini", enabled=True,
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
     )
 
     with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
         patch("agent_runtime.agents.runtime.Runner.run", side_effect=RuntimeError("API down")),
         pytest.raises(RuntimeError, match="API down"),
     ):
-        await run_agent("Hello", session_id=encode(1))
+        await run_agent(
+            "Hello",
+            session_id=encode(1),
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+            model_repo=mock_model_repo,
+            agent_factory=AgentFactory(),
+        )
 
 
 @pytest.mark.asyncio
 async def test_run_agent_streamed_runner_error_yields_error_event(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
     mock_model_repo = AsyncMock()
 
     mock_repo.get_session.return_value = Session(id=1, title="Test")
     mock_repo.get_latest_system_message.return_value = Message(
-        id=1, session_id=1, role="system", content="Default",
+        id=1,
+        session_id=1,
+        role="system",
+        content="Default",
     )
     mock_repo.get_messages.return_value = [
         Message(id=2, session_id=1, role="user", content="Hi"),
     ]
     mock_model_repo.get_by_provider_model.return_value = RuntimeModel(
-        id=1, provider="openai", model_id="gpt-5.4-mini",
-        name="gpt-5.4-mini", enabled=True,
+        id=1,
+        provider="openai",
+        model_id="gpt-5.4-mini",
+        name="gpt-5.4-mini",
+        enabled=True,
     )
 
     class FailingStreamedResult:
@@ -703,17 +724,21 @@ async def test_run_agent_streamed_runner_error_yields_error_event(monkeypatch):
             raise RuntimeError("stream broke")
             yield  # make it an async generator
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        patch("agent_runtime.agents.runtime.RuntimeModelRepo", return_value=mock_model_repo),
-        patch(
-            "agent_runtime.agents.runtime.Runner.run_streamed",
-            return_value=FailingStreamedResult(),
-        ),
+    with patch(
+        "agent_runtime.agents.runtime.Runner.run_streamed",
+        return_value=FailingStreamedResult(),
     ):
-        events = [e async for e in run_agent_streamed("Hi", session_id=encode(1))]
+        events = [
+            e
+            async for e in run_agent_streamed(
+                "Hi",
+                session_id=encode(1),
+                session_repo=mock_repo,
+                prompt_repo=mock_prompt_repo,
+                model_repo=mock_model_repo,
+                agent_factory=AgentFactory(),
+            )
+        ]
 
     error_events = [e for e in events if e["type"] == "error"]
     assert len(error_events) == 1
@@ -723,64 +748,69 @@ async def test_run_agent_streamed_runner_error_yields_error_event(monkeypatch):
 @pytest.mark.asyncio
 async def test_switch_prompt_success(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
 
     mock_repo.get_session.return_value = Session(id=1, title="Test")
     mock_prompt_repo.get_by_name.return_value = SystemPrompt(
-        id=2, name="pirate", content="You are a pirate.",
+        id=2,
+        name="pirate",
+        content="You are a pirate.",
     )
     mock_repo.add_message.return_value = Message(id=10, role="system", content="You are a pirate.")
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-    ):
-        from agent_runtime.agents.runtime import switch_prompt
-        result = await switch_prompt(encode(1), "pirate")
+    from agent_runtime.agents.runtime import switch_prompt
+
+    result = await switch_prompt(
+        encode(1),
+        "pirate",
+        session_repo=mock_repo,
+        prompt_repo=mock_prompt_repo,
+    )
 
     assert result == "pirate"
     mock_repo.add_message.assert_called_once_with(
-        1, "system", "You are a pirate.", system_prompt_id=2,
+        1,
+        "system",
+        "You are a pirate.",
+        system_prompt_id=2,
     )
 
 
 @pytest.mark.asyncio
 async def test_switch_prompt_not_found_raises(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
 
     mock_repo.get_session.return_value = Session(id=1, title="Test")
     mock_prompt_repo.get_by_name.return_value = None
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        pytest.raises(ValueError, match="Prompt not found"),
-    ):
-        from agent_runtime.agents.runtime import switch_prompt
-        await switch_prompt(encode(1), "nonexistent")
+    from agent_runtime.agents.runtime import switch_prompt
+
+    with pytest.raises(ValueError, match="Prompt not found"):
+        await switch_prompt(
+            encode(1),
+            "nonexistent",
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+        )
 
 
 @pytest.mark.asyncio
 async def test_switch_prompt_session_not_found_raises(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
-    mock_db = AsyncMock()
     mock_repo = AsyncMock()
     mock_prompt_repo = AsyncMock()
 
     mock_repo.get_session.return_value = None
 
-    with (
-        patch("agent_runtime.agents.runtime.get_db", return_value=mock_db),
-        patch("agent_runtime.agents.runtime.SessionRepo", return_value=mock_repo),
-        patch("agent_runtime.agents.runtime.SystemPromptRepo", return_value=mock_prompt_repo),
-        pytest.raises(ValueError, match="Session not found"),
-    ):
-        from agent_runtime.agents.runtime import switch_prompt
-        await switch_prompt(encode(999), "pirate")
+    from agent_runtime.agents.runtime import switch_prompt
+
+    with pytest.raises(ValueError, match="Session not found"):
+        await switch_prompt(
+            encode(999),
+            "pirate",
+            session_repo=mock_repo,
+            prompt_repo=mock_prompt_repo,
+        )

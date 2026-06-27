@@ -15,8 +15,7 @@ from agent_runtime.agents.model_provider import (
     resolve_runtime_model,
     serialize_usage,
 )
-from agent_runtime.config import Settings
-from agent_runtime.db.connection import Database
+from agent_runtime.config import settings
 from agent_runtime.db.prompt_repo import SystemPromptRepo
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
 from agent_runtime.db.session_repo import SessionRepo
@@ -59,17 +58,41 @@ def _extract_model_parameters(model_settings: ModelSettings) -> dict[str, Any]:
         params["presence_penalty"] = model_settings.presence_penalty
     return params
 
-_db: Database | None = None
+
+_DEFAULT_TOOLS = [
+    web_search,
+    web_fetch,
+    get_weather,
+    convert_currency,
+    get_country_info,
+    generate_visualization,
+]
 
 
-async def get_db() -> Database:
-    """Get or create the database engine."""
-    global _db
-    if _db is None:
-        settings = Settings()
-        _db = Database(settings.database_url)
-        _db.connect()
-    return _db
+class AgentFactory:
+    """Creates Agent instances with a configurable tool set and default model."""
+
+    def __init__(
+        self,
+        tools: list | None = None,
+        default_model: str = "gpt-5.4-mini",
+    ) -> None:
+        self.tools = tools if tools is not None else _DEFAULT_TOOLS
+        self.default_model = default_model
+
+    def create(
+        self,
+        system_prompt: str,
+        model: str | Model | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> Agent:
+        return Agent(
+            name="MainAgent",
+            instructions=system_prompt,
+            model=model or self.default_model,
+            model_settings=model_settings or ModelSettings(),
+            tools=self.tools,
+        )
 
 
 def create_agent(
@@ -78,20 +101,8 @@ def create_agent(
     model_settings: ModelSettings | None = None,
 ) -> Agent:
     """Create the configured runtime agent with the given system prompt."""
-    settings = Settings()
-    return Agent(
-        name="MainAgent",
-        instructions=system_prompt,
-        model=model or settings.openai_model,
-        model_settings=model_settings or ModelSettings(),
-        tools=[
-            web_search,
-            web_fetch,
-            get_weather,
-            convert_currency,
-            get_country_info,
-            generate_visualization,
-        ],
+    return AgentFactory(default_model=settings.openai_model).create(
+        system_prompt, model=model, model_settings=model_settings
     )
 
 
@@ -113,6 +124,11 @@ async def run_agent(
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    *,
+    session_repo: SessionRepo,
+    prompt_repo: SystemPromptRepo,
+    model_repo: RuntimeModelRepo,
+    agent_factory: AgentFactory,
 ) -> AgentResponse:
     """Run the agent with a user message, persist to DB, and return the response.
 
@@ -123,11 +139,7 @@ async def run_agent(
     Returns:
         AgentResponse with the agent's reply and the session ID.
     """
-    db = await get_db()
-    repo = SessionRepo(db)
-    prompt_repo = SystemPromptRepo(db)
-    model_repo = RuntimeModelRepo(db)
-
+    repo = session_repo
     runtime_model = await resolve_runtime_model(
         model_repo=model_repo,
         provider=provider,
@@ -192,7 +204,7 @@ async def run_agent(
             )
 
     # Run the agent with the active system prompt, full history, and persistence hooks
-    agent = create_agent(
+    agent = agent_factory.create(
         system_prompt,
         model=runtime_model.model,
         model_settings=runtime_model.model_settings,
@@ -280,6 +292,11 @@ async def run_agent_streamed(
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    *,
+    session_repo: SessionRepo,
+    prompt_repo: SystemPromptRepo,
+    model_repo: RuntimeModelRepo,
+    agent_factory: AgentFactory,
 ):
     """Stream agent events as async generator of dicts.
 
@@ -289,11 +306,7 @@ async def run_agent_streamed(
     from agents.items import ItemHelpers
     from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 
-    db = await get_db()
-    repo = SessionRepo(db)
-    prompt_repo = SystemPromptRepo(db)
-    model_repo = RuntimeModelRepo(db)
-
+    repo = session_repo
     runtime_model = await resolve_runtime_model(
         model_repo=model_repo,
         provider=provider,
@@ -352,7 +365,7 @@ async def run_agent_streamed(
                 }
             )
 
-    agent = create_agent(
+    agent = agent_factory.create(
         system_prompt,
         model=runtime_model.model,
         model_settings=runtime_model.model_settings,
@@ -623,15 +636,18 @@ async def run_agent_streamed(
             yield {"type": "error", "message": str(exc)}
 
 
-async def switch_prompt(session_id: str, prompt_name: str) -> str:
+async def switch_prompt(
+    session_id: str,
+    prompt_name: str,
+    *,
+    session_repo: SessionRepo,
+    prompt_repo: SystemPromptRepo,
+) -> str:
     """Switch the system prompt for an existing session.
 
     Inserts a new system message with the named prompt. Returns the prompt name.
     """
-    db = await get_db()
-    repo = SessionRepo(db)
-    prompt_repo = SystemPromptRepo(db)
-
+    repo = session_repo
     internal_id = decode(session_id)
     sess = await repo.get_session(internal_id)
     if not sess:

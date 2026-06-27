@@ -63,7 +63,12 @@ async def switch_session_prompt(
         raise HTTPException(404, f"Prompt '{body.name}' not found")
 
     try:
-        await switch_prompt(encoded_id, body.name)
+        await switch_prompt(
+            encoded_id,
+            body.name,
+            session_repo=session_repo,
+            prompt_repo=prompt_repo,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
