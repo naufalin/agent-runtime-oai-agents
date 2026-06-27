@@ -87,4 +87,4 @@ async def _get_weather(city: str) -> str:
     )
 
 
-get_weather = function_tool(_get_weather)
+get_weather = function_tool(_get_weather, name_override="get_weather")

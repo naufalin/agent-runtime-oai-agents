@@ -153,6 +153,44 @@ _DEFAULT_TOOLS = [
 ]
 
 
+# Name -> function_tool instance. Built once at import from _DEFAULT_TOOLS.
+# Names come from the SDK's `name_override` argument on each tool module.
+TOOL_REGISTRY: dict[str, Any] = {t.name: t for t in _DEFAULT_TOOLS}
+
+
+def register_tool(name: str, tool: Any) -> None:
+    """Register a tool by name for use in ChatRequest.tools / SessionCreate.tools.
+
+    Convenience for adding tools at runtime; the canonical registry is built
+    from `_DEFAULT_TOOLS` at import. New tools should normally be added by
+    appending to `_DEFAULT_TOOLS` and re-exporting here.
+    """
+    TOOL_REGISTRY[name] = tool
+
+
+def available_tool_names() -> list[str]:
+    """Sorted list of tool names exposed to clients via the API."""
+    return sorted(TOOL_REGISTRY)
+
+
+def resolve_tools(names: list[str] | None) -> list[Any]:
+    """Resolve a list of tool names to function_tool instances.
+
+    Semantics:
+      * None  -> return a copy of the server default tool set.
+      * []    -> return an empty list (agent has NO tools; pure chat).
+      * [str] -> return the named tools, in order. Unknown names raise ValueError.
+
+    Returns a fresh list (caller may mutate). Does not raise on empty result.
+    """
+    if names is None:
+        return list(_DEFAULT_TOOLS)
+    unknown = [n for n in names if n not in TOOL_REGISTRY]
+    if unknown:
+        raise ValueError(f"Unknown tool(s): {unknown}. Available: {available_tool_names()}")
+    return [TOOL_REGISTRY[n] for n in names]
+
+
 class AgentFactory:
     """Creates Agent instances with a configurable tool set and default model."""
 
@@ -169,13 +207,14 @@ class AgentFactory:
         system_prompt: str,
         model: str | Model | None = None,
         model_settings: ModelSettings | None = None,
+        tools: list | None = None,
     ) -> Agent:
         return Agent(
             name="MainAgent",
             instructions=system_prompt,
             model=model or self.default_model,
             model_settings=model_settings or ModelSettings(),
-            tools=self.tools,
+            tools=tools if tools is not None else self.tools,
         )
 
 
@@ -213,12 +252,15 @@ async def run_agent(
     prompt_repo: SystemPromptRepo,
     model_repo: RuntimeModelRepo,
     agent_factory: AgentFactory,
+    tools_override: list[str] | None = None,
 ) -> AgentResponse:
     """Run the agent with a user message, persist to DB, and return the response.
 
     Args:
         user_message: The user's message text.
         session_id: Encoded session ID (from ids.encode). None to start new.
+        tools_override: Per-turn tool allowlist. Resolution order is
+            ``tools_override`` -> ``Session.tools_json`` -> server defaults.
 
     Returns:
         AgentResponse with the agent's reply and the session ID.
@@ -259,6 +301,12 @@ async def run_agent(
     system_msg = await repo.get_latest_system_message(internal_id)
     system_prompt = system_msg.content if system_msg else ""
 
+    # Resolve effective tool set for this turn.
+    # Priority: tools_override (per-turn) > session.tools_json > server defaults.
+    assert internal_id is not None  # guaranteed: either decoded or freshly created above
+    session_tools = await repo.get_tools(internal_id)
+    effective_tools = resolve_tools(tools_override if tools_override is not None else session_tools)
+
     # Save user message
     await repo.add_message(internal_id, "user", user_message)
 
@@ -292,6 +340,7 @@ async def run_agent(
         system_prompt,
         model=runtime_model.model,
         model_settings=runtime_model.model_settings,
+        tools=effective_tools,
     )
     run_context = RunContext(session_id=internal_id, repo=repo)
 
@@ -299,7 +348,18 @@ async def run_agent(
         name="agent-run",
         input_data=user_message,
         session_id=str(internal_id),
-        metadata={"provider": runtime_model.provider, "model": runtime_model.model_name},
+        metadata={
+            "provider": runtime_model.provider,
+            "model": runtime_model.model_name,
+            "tool_names": [t.name for t in effective_tools],
+            "tool_source": (
+                "override"
+                if tools_override is not None
+                else "session"
+                if session_tools is not None
+                else "defaults"
+            ),
+        },
     ) as span:
         _run_started = time.monotonic()
         _started_at_iso = datetime.now(UTC).isoformat()
@@ -382,11 +442,15 @@ async def run_agent_streamed(
     prompt_repo: SystemPromptRepo,
     model_repo: RuntimeModelRepo,
     agent_factory: AgentFactory,
+    tools_override: list[str] | None = None,
 ):
     """Stream agent events as async generator of dicts.
 
     Yields dicts with 'type' key: text_delta, thinking_delta, tool_start, tool_end,
     done, error.
+
+    ``tools_override`` follows the same resolution priority as ``run_agent``:
+    override > session.tools_json > server defaults.
     """
     from agents.items import ItemHelpers
     from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
@@ -425,6 +489,12 @@ async def run_agent_streamed(
     system_msg = await repo.get_latest_system_message(internal_id)
     system_prompt = system_msg.content if system_msg else ""
 
+    # Resolve effective tool set for this turn.
+    # Priority: tools_override (per-turn) > session.tools_json > server defaults.
+    assert internal_id is not None  # guaranteed: either decoded or freshly created above
+    session_tools = await repo.get_tools(internal_id)
+    effective_tools = resolve_tools(tools_override if tools_override is not None else session_tools)
+
     await repo.add_message(internal_id, "user", user_message)
 
     history = await repo.get_messages(internal_id)
@@ -454,6 +524,7 @@ async def run_agent_streamed(
         system_prompt,
         model=runtime_model.model,
         model_settings=runtime_model.model_settings,
+        tools=effective_tools,
     )
     run_context = RunContext(session_id=internal_id, repo=repo)
 
@@ -461,7 +532,19 @@ async def run_agent_streamed(
         name="agent-run-streamed",
         input_data=user_message,
         session_id=str(internal_id),
-        metadata={"provider": runtime_model.provider, "model": runtime_model.model_name},
+        metadata={
+            "provider": runtime_model.provider,
+            "model": runtime_model.model_name,
+            "tool_names": [t.name for t in effective_tools],
+            "tool_source": (
+                "override"
+                if tools_override is not None
+                else "session"
+                if session_tools is not None
+                else "defaults"
+            ),
+            "streamed": True,
+        },
     ) as span:
         result = Runner.run_streamed(
             agent,

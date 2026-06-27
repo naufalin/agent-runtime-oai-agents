@@ -630,9 +630,7 @@ async def test_run_agent_streamed_infers_generic_web_search_tool(monkeypatch):
                     tool_name=None,
                     call_id="search-1",
                     raw_item=SimpleNamespace(
-                        arguments=json.dumps(
-                            {"query": "DKI Jakarta population", "location": "ID"}
-                        )
+                        arguments=json.dumps({"query": "DKI Jakarta population", "location": "ID"})
                     ),
                 ),
             )

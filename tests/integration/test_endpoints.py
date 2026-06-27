@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
@@ -377,7 +378,7 @@ async def test_create_session(mock_session_repo, mock_prompt_repo):
         data = resp.json()
         assert "id" in data
         assert data["title"] == "Test Session"  # mock returns this
-        mock_session_repo.create_session.assert_called_once_with("Test")
+        mock_session_repo.create_session.assert_called_once_with(title="Test", tools=None)
 
 
 @pytest.mark.asyncio
@@ -531,6 +532,7 @@ async def test_chat_passes_model_options(mock_session_repo, mock_prompt_repo):
                 prompt_repo=ANY,
                 model_repo=ANY,
                 agent_factory=ANY,
+                tools_override=None,
             )
 
 
@@ -734,7 +736,7 @@ async def test_create_session_default_title(mock_session_repo, mock_prompt_repo)
     ) as client:
         resp = await client.post("/sessions", json={})
         assert resp.status_code == 201
-        mock_session_repo.create_session.assert_called_once_with("New Session")
+        mock_session_repo.create_session.assert_called_once_with(title="New Session", tools=None)
 
 
 @pytest.mark.asyncio
@@ -765,3 +767,296 @@ async def test_switch_prompt_not_found(mock_session_repo, mock_prompt_repo):
             )
             assert resp.status_code == 400
             assert "not found" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Tool allowlist — endpoint coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_tools_returns_registry(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.get("/tools")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 6
+    names = {t["name"] for t in data["tools"]}
+    assert names == {
+        "web_search",
+        "web_fetch",
+        "get_weather",
+        "convert_currency",
+        "get_country_info",
+        "generate_visualization",
+    }
+    for tool in data["tools"]:
+        assert tool["description"]  # every tool exposes a non-empty description
+
+
+@pytest.mark.asyncio
+async def test_create_session_with_tools(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.post(
+            "/sessions",
+            json={"title": "Weather only", "tools": ["get_weather"]},
+        )
+    assert resp.status_code == 201
+    mock_session_repo.create_session.assert_awaited_once_with(
+        title="Weather only", tools=["get_weather"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_session_with_unknown_tool_returns_400(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.post(
+            "/sessions",
+            json={"title": "X", "tools": ["nope"]},
+        )
+    assert resp.status_code == 400
+    assert "Unknown tool" in resp.json()["detail"]
+    assert "nope" in resp.json()["detail"]
+    mock_session_repo.create_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_session_exposes_tools(mock_session_repo, mock_prompt_repo):
+    mock_session_repo.get_session.return_value = Session(
+        id=1, title="T", tools_json=["web_search", "get_weather"]
+    )
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.get(f"/sessions/{encode(1)}")
+    assert resp.status_code == 200
+    assert resp.json()["tools"] == ["web_search", "get_weather"]
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_exposes_tools(mock_session_repo, mock_prompt_repo):
+    mock_session_repo.list_sessions.return_value = [
+        Session(id=1, title="A", tools_json=None),
+        Session(id=2, title="B", tools_json=["web_search"]),
+        Session(id=3, title="C", tools_json=[]),
+    ]
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.get("/sessions")
+    assert resp.status_code == 200
+    tools_per_session = [s["tools"] for s in resp.json()["sessions"]]
+    assert tools_per_session == [None, ["web_search"], []]
+
+
+@pytest.mark.asyncio
+async def test_patch_session_updates_title_and_tools(mock_session_repo, mock_prompt_repo):
+    # The PATCH handler does get_session twice: once to validate, once to refresh.
+    mock_session_repo.get_session.side_effect = [
+        Session(id=1, title="Old", tools_json=None),
+        Session(id=1, title="New", tools_json=["web_search"]),
+    ]
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.patch(
+            f"/sessions/{encode(1)}",
+            json={"title": "New", "tools": ["web_search"]},
+        )
+    assert resp.status_code == 200
+    mock_session_repo.update_title.assert_awaited_once_with(1, "New")
+    mock_session_repo.update_tools.assert_awaited_once_with(1, ["web_search"])
+
+
+@pytest.mark.asyncio
+async def test_patch_session_can_clear_tools_with_null(mock_session_repo, mock_prompt_repo):
+    mock_session_repo.get_session.side_effect = [
+        Session(id=1, title="T", tools_json=["web_search"]),
+        Session(id=1, title="T", tools_json=None),
+    ]
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.patch(
+            f"/sessions/{encode(1)}",
+            json={"tools": None},
+        )
+    assert resp.status_code == 200
+    mock_session_repo.update_tools.assert_awaited_once_with(1, None)
+
+
+@pytest.mark.asyncio
+async def test_patch_session_omitted_tools_field_does_not_touch_repo(
+    mock_session_repo, mock_prompt_repo
+):
+    mock_session_repo.get_session.side_effect = [
+        Session(id=1, title="Old", tools_json=["web_search"]),
+        Session(id=1, title="New", tools_json=["web_search"]),
+    ]
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.patch(
+            f"/sessions/{encode(1)}",
+            json={"title": "New"},
+        )
+    assert resp.status_code == 200
+    mock_session_repo.update_title.assert_awaited_once_with(1, "New")
+    mock_session_repo.update_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_patch_session_unknown_tool_returns_400(mock_session_repo, mock_prompt_repo):
+    mock_session_repo.get_session.return_value = Session(id=1, title="T")
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+    ) as client:
+        resp = await client.patch(
+            f"/sessions/{encode(1)}",
+            json={"tools": ["nope"]},
+        )
+    assert resp.status_code == 400
+    assert "Unknown tool" in resp.json()["detail"]
+    mock_session_repo.update_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_passes_tools_override(mock_session_repo, mock_prompt_repo):
+    """Per-turn override is forwarded to run_agent."""
+    mock_result = SimpleNamespace(
+        response="ok",
+        session_id=encode(1),
+        provider=None,
+        model=None,
+        usage=None,
+        thinking=None,
+    )
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    from unittest.mock import patch
+
+    with patch(
+        "agent_runtime.api.routers.sessions.run_agent", return_value=mock_result
+    ) as run_mock:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/chat",
+                json={"message": "Hi", "tools": ["web_search"]},
+            )
+        assert resp.status_code == 200
+        run_mock.assert_awaited_once_with(
+            "Hi",
+            session_id=encode(1),
+            provider=None,
+            model=None,
+            reasoning_effort=None,
+            session_repo=ANY,
+            prompt_repo=ANY,
+            model_repo=ANY,
+            agent_factory=ANY,
+            tools_override=["web_search"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_without_tools_field_passes_none(mock_session_repo, mock_prompt_repo):
+    mock_result = SimpleNamespace(
+        response="ok",
+        session_id=encode(1),
+        provider=None,
+        model=None,
+        usage=None,
+        thinking=None,
+    )
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    from unittest.mock import patch
+
+    with patch(
+        "agent_runtime.api.routers.sessions.run_agent", return_value=mock_result
+    ) as run_mock:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/chat",
+                json={"message": "Hi"},
+            )
+        assert resp.status_code == 200
+        run_mock.assert_awaited_once_with(
+            "Hi",
+            session_id=encode(1),
+            provider=None,
+            model=None,
+            reasoning_effort=None,
+            session_repo=ANY,
+            prompt_repo=ANY,
+            model_repo=ANY,
+            agent_factory=ANY,
+            tools_override=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_with_unknown_tool_returns_400(mock_session_repo, mock_prompt_repo):
+    _setup_deps(mock_session_repo, mock_prompt_repo)
+    from unittest.mock import patch
+
+    with patch(
+        "agent_runtime.api.routers.sessions.run_agent",
+    ) as run_mock:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/chat",
+                json={"message": "Hi", "tools": ["nope"]},
+            )
+        assert resp.status_code == 400
+        assert "Unknown tool" in resp.json()["detail"]
+        run_mock.assert_not_called()
+        mock_session_repo.add_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_unknown_tool_returns_400_before_sse(
+    mock_session_repo, mock_prompt_repo, mock_runtime_model_repo
+):
+    mock_runtime_model_repo.get_by_provider_model.return_value = RuntimeModel(
+        id=1,
+        provider="openrouter",
+        model_id="any/model",
+        name="Any",
+        enabled=True,
+    )
+    _setup_deps(mock_session_repo, mock_prompt_repo, mock_runtime_model_repo)
+    from unittest.mock import patch
+
+    with patch("agent_runtime.api.routers.sessions.run_agent_streamed") as run_streamed:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=AUTH_HEADERS
+        ) as client:
+            resp = await client.post(
+                f"/sessions/{encode(1)}/chat/stream",
+                json={"message": "Hi", "tools": ["nope"]},
+            )
+        assert resp.status_code == 400
+        assert "Unknown tool" in resp.json()["detail"]
+        assert "text/event-stream" not in resp.headers.get("content-type", "")
+        run_streamed.assert_not_called()
+        mock_session_repo.add_message.assert_not_called()

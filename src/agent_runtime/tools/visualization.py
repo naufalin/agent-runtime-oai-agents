@@ -122,4 +122,7 @@ def _build_html(title: str, echarts_option_json: str) -> str:
 </html>"""
 
 
-generate_visualization = function_tool(_generate_visualization)
+generate_visualization = function_tool(
+    _generate_visualization,
+    name_override="generate_visualization",
+)

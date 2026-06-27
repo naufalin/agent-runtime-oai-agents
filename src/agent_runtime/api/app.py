@@ -13,7 +13,7 @@ from fastapi.openapi.utils import get_openapi  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 
 from agent_runtime.api.auth import require_bearer_token, require_docs_token  # noqa: E402
-from agent_runtime.api.routers import models, prompts, sessions  # noqa: E402
+from agent_runtime.api.routers import models, prompts, sessions, tools  # noqa: E402
 from agent_runtime.db.connection import get_db  # noqa: E402
 from agent_runtime.db.prompt_repo import SystemPromptRepo  # noqa: E402
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo  # noqa: E402
@@ -56,6 +56,7 @@ app.add_middleware(
 app.include_router(sessions.router, dependencies=[Depends(require_bearer_token)])
 app.include_router(prompts.router, dependencies=[Depends(require_bearer_token)])
 app.include_router(models.router, dependencies=[Depends(require_bearer_token)])
+app.include_router(tools.router, dependencies=[Depends(require_bearer_token)])
 
 
 @app.get("/")

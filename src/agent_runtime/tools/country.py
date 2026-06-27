@@ -52,4 +52,4 @@ async def _get_country_info(country_name: str) -> str:
     )
 
 
-get_country_info = function_tool(_get_country_info)
+get_country_info = function_tool(_get_country_info, name_override="get_country_info")

@@ -64,6 +64,9 @@ class Session(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255), default="New Session")
+    # Per-session tool allowlist.
+    # None = use server defaults; [] = no tools; ["web_search"] = subset.
+    tools_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

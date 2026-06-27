@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agent_runtime.agents.model_provider import resolve_runtime_model
-from agent_runtime.agents.runtime import AgentFactory, run_agent, run_agent_streamed
+from agent_runtime.agents.runtime import (
+    AgentFactory,
+    resolve_tools,
+    run_agent,
+    run_agent_streamed,
+)
 from agent_runtime.api.deps import (
     get_agent_factory,
     get_prompt_repo,
@@ -21,6 +26,7 @@ from agent_runtime.api.schemas import (
     SessionDetail,
     SessionListOut,
     SessionOut,
+    SessionUpdate,
 )
 from agent_runtime.db.prompt_repo import SystemPromptRepo
 from agent_runtime.db.runtime_model_repo import RuntimeModelRepo
@@ -60,20 +66,36 @@ def _msg_out(msg) -> MessageOut:
     )
 
 
+def _session_out(sess, prompt_name: str | None = None) -> SessionOut:
+    return SessionOut(
+        id=encode(sess.id),
+        title=sess.title,
+        prompt=prompt_name if prompt_name is not None else "-",
+        tools=sess.tools_json,
+        created_at=sess.created_at,
+        updated_at=sess.updated_at,
+    )
+
+
+def _validate_tool_names(names: list[str]) -> None:
+    """Raise HTTPException(400) if any tool name is not in the registry."""
+    try:
+        resolve_tools(names)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @router.post("", status_code=201, response_model=SessionOut)
 async def create_session(
     body: SessionCreate | None = None,
     session_repo: SessionRepo = Depends(get_session_repo),
-    prompt_repo: SystemPromptRepo = Depends(get_prompt_repo),
 ):
     title = body.title if body else "New Session"
-    sess = await session_repo.create_session(title)
-    return SessionOut(
-        id=encode(sess.id),
-        title=sess.title,
-        created_at=sess.created_at,
-        updated_at=sess.updated_at,
-    )
+    tools = body.tools if body else None
+    if tools is not None:
+        _validate_tool_names(tools)
+    sess = await session_repo.create_session(title=title, tools=tools)
+    return _session_out(sess)
 
 
 @router.get("", response_model=SessionListOut)
@@ -87,15 +109,7 @@ async def list_sessions(
     items = []
     for s in sessions:
         prompt_name = await _get_prompt_name(s.id, prompt_repo, session_repo)
-        items.append(
-            SessionOut(
-                id=encode(s.id),
-                title=s.title,
-                prompt=prompt_name,
-                created_at=s.created_at,
-                updated_at=s.updated_at,
-            )
-        )
+        items.append(_session_out(s, prompt_name))
     return SessionListOut(sessions=items, total=len(items))
 
 
@@ -121,9 +135,46 @@ async def get_session(
         id=encode(sess.id),
         title=sess.title,
         prompt=prompt_name,
+        tools=sess.tools_json,
         created_at=sess.created_at,
         messages=[_msg_out(m) for m in messages],
     )
+
+
+@router.patch("/{encoded_id}", response_model=SessionOut)
+async def patch_session(
+    encoded_id: str,
+    body: SessionUpdate,
+    session_repo: SessionRepo = Depends(get_session_repo),
+):
+    """Partial update of session fields.
+
+    Use `model_fields_set` to distinguish "field omitted" (do nothing)
+    from "field explicitly set" (apply the value, including null).
+    """
+    try:
+        sid = decode(encoded_id)
+    except ValueError as e:
+        raise HTTPException(404, "Invalid session ID") from e
+
+    sess = await session_repo.get_session(sid)
+    if not sess:
+        raise HTTPException(404, "Session not found")
+
+    fields_set = body.model_fields_set
+
+    if "title" in fields_set and body.title is not None:
+        await session_repo.update_title(sid, body.title)
+
+    if "tools" in fields_set:
+        # Validate first; fail fast with 400 before mutating the row.
+        if body.tools is not None:
+            _validate_tool_names(body.tools)
+        await session_repo.update_tools(sid, body.tools)
+
+    # Refresh from DB so we return the post-update row.
+    sess = await session_repo.get_session(sid)
+    return _session_out(sess)
 
 
 @router.post("/{encoded_id}/chat", response_model=ChatResponse)
@@ -144,6 +195,14 @@ async def chat(
     if not sess:
         raise HTTPException(404, "Session not found")
 
+    # Validate per-turn tools up front so an unknown name returns 400 immediately
+    # instead of starting an LLM run that will fail later.
+    if body.tools is not None:
+        try:
+            resolve_tools(body.tools)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
     try:
         result = await run_agent(
             body.message,
@@ -155,6 +214,7 @@ async def chat(
             prompt_repo=prompt_repo,
             model_repo=model_repo,
             agent_factory=agent_factory,
+            tools_override=body.tools,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -202,6 +262,14 @@ async def chat_stream(
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
+    # Validate tool names up front so we return 400 instead of starting a stream
+    # that errors mid-flight.
+    if body.tools is not None:
+        try:
+            resolve_tools(body.tools)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
     async def event_generator():
         try:
             async for event in run_agent_streamed(
@@ -214,6 +282,7 @@ async def chat_stream(
                 prompt_repo=prompt_repo,
                 model_repo=model_repo,
                 agent_factory=agent_factory,
+                tools_override=body.tools,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except ValueError as e:

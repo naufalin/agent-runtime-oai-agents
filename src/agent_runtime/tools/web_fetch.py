@@ -76,4 +76,4 @@ async def _web_fetch(urls: list[str], format: str = "markdown") -> str:
     return "\n\n---\n\n".join(parts)
 
 
-web_fetch = function_tool(_web_fetch)
+web_fetch = function_tool(_web_fetch, name_override="web_fetch")

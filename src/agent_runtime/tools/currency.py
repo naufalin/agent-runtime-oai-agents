@@ -46,4 +46,4 @@ async def _convert_currency(amount: float, from_currency: str, to_currency: str)
     )
 
 
-convert_currency = function_tool(_convert_currency)
+convert_currency = function_tool(_convert_currency, name_override="convert_currency")

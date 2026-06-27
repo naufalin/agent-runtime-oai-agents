@@ -98,6 +98,50 @@ Chat requests accept optional model controls:
 
 If `provider` is omitted and `model` matches an enabled OpenRouter row in the
 model registry, the request is routed to OpenRouter for that single run.
+
+### Tool allowlist (optional)
+
+Chat and chat-stream requests, plus session creation, accept a `tools` array
+that scopes which tools the agent can call. Three-state semantics:
+
+- `null` / omitted — agent uses the server's full default tool set.
+- `[]` — agent has no tools (pure chat).
+- `["web_search", "get_weather"]` — agent can only call the named tools.
+
+Per-turn override on `/chat` and `/chat/stream` (does not persist):
+
+```bash
+curl http://localhost:8000/sessions/$ID/chat \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Forecast for Tokyo", "tools":["get_weather"]}'
+```
+
+Per-session tools at creation (persists across turns):
+
+```bash
+curl -X POST http://localhost:8000/sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Weather only", "tools":["get_weather"]}'
+```
+
+Mid-session changes via `PATCH /sessions/{id}` — pass `tools` (subset or
+`[]` to disable) and/or `title`. Omit a field to leave it untouched; pass
+`null` explicitly to reset tools to server defaults:
+
+```bash
+curl -X PATCH http://localhost:8000/sessions/$ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tools":["web_search","web_fetch"]}'
+```
+
+Resolution priority on each turn is `request.tools` → `session.tools` →
+server defaults.
+
+Available tool names are listed at `GET /tools`. Unknown names in any of
+the above requests return `400` with the available names in the error body.
 Responses and session history include nullable `provider`, `model`, `usage`, and
 `thinking` metadata. `/models` is database-backed, so OpenRouter model IDs can be
 added, edited, disabled, or deleted without a code change.

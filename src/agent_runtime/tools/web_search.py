@@ -43,4 +43,4 @@ async def _web_search(query: str, location: str = "US", language: str = "en", pa
     return "\n\n".join(formatted)
 
 
-web_search = function_tool(_web_search)
+web_search = function_tool(_web_search, name_override="web_search")

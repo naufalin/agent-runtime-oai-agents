@@ -10,10 +10,19 @@ class SessionRepo:
     def __init__(self, db: Database):
         self.db = db
 
-    async def create_session(self, title: str = "New Session") -> Session:
-        """Create a new session. Returns the ORM object with the auto-generated ID."""
+    async def create_session(
+        self,
+        title: str = "New Session",
+        tools: list[str] | None = None,
+    ) -> Session:
+        """Create a new session. Returns the ORM object with the auto-generated ID.
+
+        `tools` is the per-session tool allowlist. None means "use server defaults"
+        (tools_json column is left NULL); [] means "no tools"; ["web_search"]
+        means "subset". See api/schemas.py::SessionCreate for the full contract.
+        """
         async with self.db.session() as s:
-            sess = Session(title=title)
+            sess = Session(title=title, tools_json=tools)
             s.add(sess)
             await s.flush()
             return sess
@@ -24,6 +33,29 @@ class SessionRepo:
             sess = await s.get(Session, session_id)
             if sess:
                 sess.title = title
+
+    async def update_tools(self, session_id: int, tools: list[str] | None) -> None:
+        """Update a session's tool allowlist.
+
+        Pass None to reset to server defaults (sets tools_json to NULL).
+        Pass [] to disable all tools for this session.
+        Pass a non-empty list to scope the session to those tools.
+        """
+        async with self.db.session() as s:
+            sess = await s.get(Session, session_id)
+            if sess:
+                sess.tools_json = tools
+
+    async def get_tools(self, session_id: int) -> list[str] | None:
+        """Read a session's persisted tool allowlist.
+
+        Returns None when the row's tools_json is NULL (i.e. server defaults).
+        """
+        async with self.db.session() as s:
+            sess = await s.get(Session, session_id)
+            if sess is None:
+                return None
+            return sess.tools_json
 
     async def add_message(
         self,

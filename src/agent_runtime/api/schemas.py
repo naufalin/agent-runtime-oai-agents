@@ -10,12 +10,30 @@ from pydantic import BaseModel, Field
 
 class SessionCreate(BaseModel):
     title: str = "New Session"
+    # Optional tool allowlist applied to every chat turn in this session.
+    # None -> server defaults; [] -> no tools; ["web_search"] -> subset.
+    # Can be changed later via PATCH /sessions/{id}.
+    tools: list[str] | None = Field(default=None, max_length=32)
+
+
+class SessionUpdate(BaseModel):
+    """Partial update for an existing session. All fields optional.
+
+    Distinguishing "field omitted" from "field set to null" uses
+    `model_fields_set` at the call site (see routers/sessions.py).
+    """
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    tools: list[str] | None = Field(default=None, max_length=32)
 
 
 class SessionOut(BaseModel):
     id: str
     title: str
     prompt: str = "-"
+    # Tool names that will be applied to chat turns in this session.
+    # null in this response means "server defaults" (tools_json IS NULL on the row).
+    tools: list[str] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -44,6 +62,7 @@ class SessionDetail(BaseModel):
     id: str
     title: str
     prompt: str = "-"
+    tools: list[str] | None = None
     created_at: datetime | None = None
     messages: list[MessageOut]
 
@@ -56,6 +75,11 @@ class ChatRequest(BaseModel):
     provider: str | None = Field(default=None, min_length=1)
     model: str | None = Field(default=None, min_length=1)
     reasoning_effort: str | None = Field(default=None, min_length=1)
+    # Per-turn tool allowlist. Overrides the session's persisted tools for this
+    # single turn only; the session row is not modified.
+    # None -> fall back to session.tools_json (or server defaults if both null);
+    # [] -> no tools for this turn; ["web_search"] -> subset for this turn.
+    tools: list[str] | None = Field(default=None, max_length=32)
 
 
 class ChatResponse(BaseModel):
@@ -103,6 +127,19 @@ class ModelsOut(BaseModel):
     default_provider: str
     openai: dict[str, Any]
     openrouter: dict[str, Any]
+
+
+# --- Tools ---
+
+
+class ToolOut(BaseModel):
+    name: str
+    description: str
+
+
+class ToolListOut(BaseModel):
+    tools: list[ToolOut]
+    total: int
 
 
 # --- Prompts ---

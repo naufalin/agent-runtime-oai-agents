@@ -10,7 +10,13 @@ AUTH_HEADERS = {"Authorization": "Bearer test-token"}
 
 @pytest.fixture(autouse=True)
 def _set_auth_token(monkeypatch):
-    monkeypatch.setenv("AGENT_RUNTIME_BEARER_TOKEN", "test-token")
+    """Configure API auth after the module-level settings object is imported."""
+    from agent_runtime.config import Settings
+
+    monkeypatch.setattr(
+        "agent_runtime.api.auth.settings",
+        Settings(agent_runtime_bearer_token="test-token"),
+    )
 
 
 @pytest.mark.asyncio
@@ -38,6 +44,7 @@ async def test_openapi_schema_has_expected_paths():
         assert "/sessions/{encoded_id}/chat/stream" in paths
         assert "/models" in paths
         assert "/prompts" in paths
+        assert "/tools" in paths
 
 
 @pytest.mark.asyncio
